@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark"><!-- 跟随宿主 iframe 的配色方案，避免浏览器在 iframe 后垫不透明底色 -->
+<title>开场揭幕</title>
+<!--
+  SealStage · 开场揭幕（入场动效）
+  用法：放进小剧场的"序幕"场景，铺满舞台、置顶。场景切入（iframe 挂载）即播放，结束后停在标题卡。
+  end: 'hold' 停留；'fade' 播完后淡出为透明，露出下层舞台。
+  本地预览：?theme=taisho 切换主题；点击页面重播。
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'"><!-- 非阻塞加载：字体源不可达时先用系统字体渲染 -->
+<style>
+  :root {
+    --bg: #efe9dc; --bg2: #e2d9c6; --ink: #161616; --line: #161616; --accent: #c8322b; --soft: rgba(22,22,22,.55);
+    --title-font: "Ma Shan Zheng", "STXingkai", "华文行楷", "KaiTi", "STKaiti", serif;
+    --serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+    --grain: .22;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  body { font-family: var(--serif); color: var(--ink); }
+  #root { position: fixed; inset: 0; background: radial-gradient(ellipse at 50% 45%, var(--bg) 0%, var(--bg2) 100%); transition: opacity 1.6s ease; container-type: size; }
+  #root.gone { opacity: 0; }
+  /* 纸纹 */
+  .grain { position: absolute; inset: 0; opacity: var(--grain); mix-blend-mode: multiply; pointer-events: none; }
+  .vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.28) 100%); pointer-events: none; }
+  /* 墨晕扩散 */
+  .bloom { position: absolute; left: 50%; top: 46%; width: 140cqmin; height: 140cqmin; translate: -50% -50%; border-radius: 50%;
+    background: radial-gradient(circle, var(--accent) 0 1.5%, transparent 1.6%), radial-gradient(circle, color-mix(in srgb, var(--line) 12%, transparent) 0 40%, transparent 70%);
+    scale: 0; opacity: 0; }
+  .play .bloom { animation: bloom 2.4s cubic-bezier(.2,.7,.2,1) .1s forwards; }
+  @keyframes bloom { 0% { scale: 0; opacity: 1 } 60% { opacity: .9 } 100% { scale: 1; opacity: .5 } }
+  /* 笔刷横线 */
+  .stroke { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; }
+  .stroke path { fill: none; stroke: var(--line); stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+  .play .stroke path { animation: draw 1.4s cubic-bezier(.6,0,.2,1) forwards; }
+  .play .stroke path:nth-child(2) { animation-delay: .35s; }
+  @keyframes draw { to { stroke-dashoffset: 0 } }
+  /* 纹章环 */
+  .emblem { position: absolute; left: 50%; top: 46%; width: 62cqmin; height: 62cqmin; translate: -50% -50%; opacity: 0; scale: .7; }
+  .emblem svg { width: 100%; height: 100%; overflow: visible; }
+  .play .emblem { animation: in 1.6s cubic-bezier(.2,.8,.2,1) 1.2s forwards; }
+  .emblem .spin { transform-origin: 0 0; animation: spin 120s linear infinite; } /* viewBox 以 (0,0) 为圆心 */
+  .emblem .spin.rev { animation-duration: 80s; animation-direction: reverse; }
+  @keyframes spin { to { rotate: 360deg } }
+  @keyframes in { to { opacity: 1; scale: 1 } }
+  /* 标题 */
+  .title { position: absolute; left: 50%; top: 46%; translate: -50% -50%; display: flex; gap: .04em; font-family: var(--title-font); font-size: 22cqmin; line-height: 1; color: var(--ink); white-space: nowrap; }
+  .title.v { writing-mode: vertical-rl; font-size: 19cqmin; }
+  .title span { display: inline-block; opacity: 0; filter: blur(12px); clip-path: inset(0 0 100% 0); }
+  .title.v span { clip-path: inset(0 100% 0 0); }
+  .play .title span { animation: write 1.1s cubic-bezier(.3,.6,.2,1) forwards; }
+  @keyframes write { 40% { opacity: 1 } to { opacity: 1; filter: blur(0); clip-path: inset(0 0 0 0) } }
+  .title span.shine { background: linear-gradient(100deg, var(--ink) 40%, color-mix(in srgb, var(--accent) 70%, white) 50%, var(--ink) 60%); background-size: 300% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: write 1.1s forwards, shine 7s ease-in-out 2s infinite; }
+  @keyframes shine { 0%, 70% { background-position: 100% 0 } 100% { background-position: -100% 0 } }
+  /* 印章 */
+  .seal { position: absolute; width: 9cqmin; height: 9cqmin; border-radius: 1cqmin; background: var(--accent); color: var(--bg); display: grid; place-items: center; font-family: var(--title-font); font-size: 5.2cqmin; line-height: 1;
+    box-shadow: inset 0 0 0 .5cqmin var(--accent), inset 0 0 0 .8cqmin color-mix(in srgb, var(--bg) 80%, transparent); opacity: 0; scale: 2.4; rotate: -18deg; }
+  .play .seal { animation: stamp .5s cubic-bezier(.5,0,.6,1.4) forwards; }
+  @keyframes stamp { 70% { opacity: 1; scale: .92; rotate: -6deg } to { opacity: 1; scale: 1; rotate: -8deg } }
+  .play.shake { animation: shake .35s; }
+  @keyframes shake { 20% { translate: 3px -2px } 40% { translate: -3px 2px } 60% { translate: 2px 1px } 80% { translate: -1px -1px } }
+  /* 副标题 & 信息 */
+  .sub { position: absolute; left: 50%; top: calc(46% + 20cqmin); translate: -50% 0; font-size: 1.9cqmin; letter-spacing: .6em; text-indent: .6em; text-transform: uppercase; color: var(--soft); opacity: 0; white-space: nowrap; }
+  .title.v ~ .sub { writing-mode: vertical-rl; top: 50%; left: calc(50% + 15cqmin); translate: 0 -50%; text-indent: 0; }
+  .meta { position: absolute; right: 7cqw; top: 50%; translate: 0 -50%; display: flex; flex-direction: column; gap: 2.6cqmin; writing-mode: vertical-rl; }
+  .meta div { font-size: 2.2cqmin; letter-spacing: .3em; opacity: 0; translate: 0 -1em; }
+  .meta b { color: var(--accent); font-weight: 700; margin-bottom: .6em; display: inline-block; }
+  .poem { position: absolute; left: 7cqw; top: 50%; translate: 0 -50%; writing-mode: vertical-rl; display: flex; flex-direction: column; gap: 2cqmin; }
+  .poem div { font-size: 2.4cqmin; letter-spacing: .35em; color: var(--soft); opacity: 0; clip-path: inset(0 0 100% 0); }
+  .play .sub { animation: fade 1.4s ease forwards; }
+  .play .meta div { animation: drop 1s ease forwards; }
+  .play .poem div { animation: write 1.6s ease forwards; }
+  @keyframes fade { to { opacity: 1 } }
+  @keyframes drop { to { opacity: 1; translate: 0 0 } }
+  .rule { position: absolute; left: 50%; bottom: 7cqh; translate: -50% 0; font-size: 1.5cqmin; letter-spacing: .5em; color: var(--soft); opacity: 0; }
+  .play .rule { animation: fade 1.2s ease forwards; }
+  @media (prefers-reduced-motion: reduce) { .emblem .spin, .title span.shine { animation: none !important; } }
+</style>
+</head>
+<body>
+<div id="root">
+  <svg class="grain" width="100%" height="100%"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="3" stitchTiles="stitch"/><feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .9 0"/></filter><rect width="100%" height="100%" filter="url(#n)"/></svg>
+  <div class="bloom"></div>
+  <svg class="stroke" viewBox="0 0 1000 1000" preserveAspectRatio="none">
+    <path pathLength="1" d="M90 300 C 300 286, 700 312, 910 296" stroke-width="2.4"/>
+    <path pathLength="1" d="M110 708 C 340 720, 640 696, 890 712" stroke-width="1.6"/>
+  </svg>
+  <div class="emblem"><svg viewBox="-100 -100 200 200" id="emblem"></svg></div>
+  <div class="poem" id="poem"></div>
+  <div class="title" id="title"></div>
+  <div class="seal" id="seal"></div>
+  <div class="sub" id="sub"></div>
+  <div class="meta" id="meta"></div>
+  <div class="rule" id="rule"></div>
+  <div class="vignette"></div>
+</div>
+<script>
+const CONFIG = {
+  theme: 'ink',                       // ink | taisho | cosmic | washi | classic | school
+  title: '雾中回响',
+  vertical: false,                    // 标题竖排
+  seal: '忍',                         // 印章字（1 字最佳），空串则不显示
+  subtitle: 'Shinobigami · Modern Scenario',
+  ringText: 'SHINOBIGAMI ✦ 忍术バトルRPG ✦ ',
+  poem: ['夕阳之下 万物同归', '你所寻找的 终将寻你'],   // 竖排诗句（左侧）
+  meta: [['类型', '对立型'], ['规制', '现代篇'], ['人数', '四人'], ['时限', '三巡']],
+  rule: 'GM · 请在准备完毕后切换场景',
+  end: 'hold',                        // hold | fade
+  fadeAfter: 14                       // end=fade 时，开播后多少秒淡出
+}
+const THEMES = {
+  ink:     { bg: '#efe9dc', bg2: '#ddd3bf', ink: '#141414', line: '#141414', accent: '#3c64b4', soft: 'rgba(20,20,20,.55)', grain: .22 },
+  taisho:  { bg: '#3a2b26', bg2: '#1d1513', ink: '#efe2c8', line: '#d8c4a0', accent: '#c23a2c', soft: 'rgba(239,226,200,.6)', grain: .35 },
+  cosmic:  { bg: '#0d1226', bg2: '#020308', ink: '#eef2fb', line: '#c9d4ec', accent: '#5b7bff', soft: 'rgba(238,242,251,.55)', grain: .12 },
+  washi:   { bg: '#ead9d5', bg2: '#d7c0bb', ink: '#7a453c', line: '#a0675b', accent: '#b34a3c', soft: 'rgba(122,69,60,.6)', grain: .28 },
+  classic: { bg: '#2a2321', bg2: '#141010', ink: '#e7d6ae', line: '#bfa77a', accent: '#d8433b', soft: 'rgba(231,214,174,.6)', grain: .3 },
+  school:  { bg: '#fbefe0', bg2: '#f1c9a8', ink: '#2c2238', line: '#3a2e48', accent: '#e0493f', soft: 'rgba(44,34,56,.6)', grain: .18 }
+}
+const qs = new URLSearchParams(location.search)
+if (qs.has('theme')) CONFIG.theme = qs.get('theme')
+if (qs.has('title')) CONFIG.title = qs.get('title')
+if (qs.has('vertical')) CONFIG.vertical = qs.get('vertical') === '1'
+
+const $ = id => document.getElementById(id)
+const th = THEMES[CONFIG.theme] || THEMES.ink
+for (const [k, v] of Object.entries(th)) document.documentElement.style.setProperty('--' + k, v)
+
+/* 纹章：刻度环 + 环形文字 + 内圈月相点 */
+function buildEmblem () {
+  const ticks = Array.from({ length: 72 }, (_, i) => {
+    const a = i * 5 * Math.PI / 180, r1 = i % 6 ? 86 : 82, r2 = 90
+    return `<line x1="${Math.cos(a) * r1}" y1="${Math.sin(a) * r1}" x2="${Math.cos(a) * r2}" y2="${Math.sin(a) * r2}"/>`
+  }).join('')
+  const dots = Array.from({ length: 12 }, (_, i) => {
+    const a = i * 30 * Math.PI / 180, x = Math.cos(a) * 62, y = Math.sin(a) * 62, ph = Math.cos(i / 12 * Math.PI * 2)
+    return `<g transform="translate(${x} ${y})"><circle r="4.2" fill="var(--line)" opacity=".85"/><circle r="4.2" cx="${ph * 3.4}" fill="var(--bg)"/></g>`
+  }).join('')
+  const txt = CONFIG.ringText.repeat(Math.max(1, Math.ceil(46 / CONFIG.ringText.length)))
+  $('emblem').innerHTML = `
+    <defs><path id="ring" d="M -74 0 A 74 74 0 1 1 74 0 A 74 74 0 1 1 -74 0"/></defs>
+    <g class="spin" stroke="var(--line)" stroke-width=".6" fill="none" opacity=".75">
+      <circle r="96"/><circle r="92" stroke-dasharray="1 3"/>${ticks}
+    </g>
+    <g class="spin rev"><text font-size="7.4" letter-spacing="2.2" fill="var(--line)" opacity=".8"><textPath href="#ring">${txt}</textPath></text></g>
+    <g class="spin" opacity=".9">${dots}<circle r="50" fill="none" stroke="var(--line)" stroke-width=".4" stroke-dasharray="2 2"/></g>`
+}
+
+function build () {
+  buildEmblem()
+  const t = $('title'); t.className = 'title' + (CONFIG.vertical ? ' v' : '')
+  t.innerHTML = [...CONFIG.title].map((c, i) => `<span class="${i === 0 ? 'shine' : ''}" style="animation-delay:${2.1 + i * .38}s">${c}</span>`).join('')
+  const s = $('seal'); s.textContent = CONFIG.seal; s.style.display = CONFIG.seal ? '' : 'none'
+  const sealAt = 2.1 + CONFIG.title.length * .38 + .7
+  s.style.animationDelay = sealAt + 's'
+  $('sub').textContent = CONFIG.subtitle; $('sub').style.animationDelay = sealAt + .4 + 's'
+  $('meta').innerHTML = CONFIG.meta.map(([k, v], i) => `<div style="animation-delay:${sealAt + .8 + i * .22}s"><b>${k}</b>${v}</div>`).join('')
+  $('poem').innerHTML = CONFIG.poem.map((l, i) => `<div style="animation-delay:${sealAt + 1.2 + i * .6}s">${l}</div>`).join('')
+  $('rule').textContent = CONFIG.rule; $('rule').style.animationDelay = sealAt + 2.4 + 's'
+  return sealAt
+}
+
+/* 印章位置贴着标题右下角 */
+function placeSeal () {
+  const r = $('title').getBoundingClientRect(), s = $('seal')
+  s.style.left = (r.right - s.offsetWidth * .35) + 'px'
+  s.style.top = (r.bottom - s.offsetHeight * .75) + 'px'
+}
+
+let timers = []
+function play () {
+  timers.forEach(clearTimeout); timers = []
+  const root = $('root'); root.classList.remove('play', 'gone', 'shake'); void root.offsetWidth
+  const sealAt = build()
+  requestAnimationFrame(placeSeal)
+  root.classList.add('play')
+  timers.push(setTimeout(() => { root.classList.add('shake'); setTimeout(() => root.classList.remove('shake'), 400) }, (sealAt + .35) * 1000))
+  if (CONFIG.end === 'fade') timers.push(setTimeout(() => root.classList.add('gone'), CONFIG.fadeAfter * 1000))
+}
+addEventListener('resize', placeSeal)
+document.fonts && document.fonts.ready.then(placeSeal)
+addEventListener('click', play)
+play()
+</script>
+</body>
+</html>

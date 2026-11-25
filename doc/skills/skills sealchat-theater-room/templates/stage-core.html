@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark"><!-- 跟随宿主 iframe 的配色方案，避免浏览器在 iframe 后垫不透明底色 -->
+<title>演出核心</title>
+<!--
+  SealStage · 演出核心（叙事事件同步）—— 同一个 iForm 用两次：
+    · 小尺寸（宽 < 800px）：GM 控制台。推荐作为频道 iForm 浮窗打开（玩家看不到），也可放上舞台。
+    · 铺满舞台（关闭交互、置顶）：特效层。所有人同步看到幕名横幅、计数印章、字卡、闪光。
+  iForm 需启用 Embed API：storage.read / storage.write / events.subscribe / events.publish / permissions.read。
+  本地预览：?role=console | overlay，?gm=0 模拟玩家，?theme=taisho 切主题。
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'"><!-- 非阻塞加载：字体源不可达时先用系统字体渲染 -->
+<style>
+  :root {
+    --bg: #efe9dc; --ink: #161616; --line: #161616; --accent: #c8322b; --soft: rgba(22,22,22,.55); --veil: rgba(10,10,14,.72);
+    --brush: "Ma Shan Zheng", "STXingkai", "KaiTi", serif;
+    --serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; font-family: var(--serif); color: var(--ink); }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  [hidden] { display: none !important; }
+  .abs { position: absolute; } .fill { position: absolute; inset: 0; }
+  .center { position: absolute; left: 50%; top: 50%; translate: -50% -50%; }
+
+  /* ---------- 控制台 ---------- */
+  #console { position: fixed; inset: 0; display: grid; place-items: center; font-size: clamp(11px, 2.6vmin, 18px); }
+  .card { width: min(100% - 1.2em, 30em); max-height: calc(100% - 1.2em); overflow: auto; scrollbar-width: none; padding: 1.2em 1.3em; border-radius: .6em; background: var(--bg);
+    box-shadow: 0 .8em 2em rgba(0,0,0,.4), inset 0 0 0 .3em var(--bg), inset 0 0 0 .36em color-mix(in srgb, var(--line) 45%, transparent); }
+  .hdr { display: flex; justify-content: space-between; font-size: .72em; letter-spacing: .35em; color: var(--soft); }
+  .now { display: flex; align-items: center; gap: 1em; margin: .8em 0 .2em; }
+  .now .seal { width: 3.4em; height: 3.4em; flex: none; border-radius: .3em; background: var(--accent); color: var(--bg); display: grid; place-items: center; font-family: var(--brush); font-size: 1.2em; }
+  .now b { display: block; font-family: var(--brush); font-weight: 400; font-size: 2.2em; line-height: 1.1; }
+  .now span { font-size: .85em; color: var(--soft); letter-spacing: .2em; }
+  .gm { margin-top: .8em; padding-top: .7em; border-top: 1px dashed color-mix(in srgb, var(--line) 35%, transparent); display: grid; gap: .45em; }
+  .gm h4 { margin: .3em 0 0; font-size: .66em; letter-spacing: .4em; color: var(--soft); font-weight: 400; }
+  .r { display: flex; flex-wrap: wrap; gap: .4em; }
+  .b { flex: 1 1 auto; min-width: 4.5em; border: 1px solid color-mix(in srgb, var(--line) 50%, transparent); background: transparent; border-radius: .4em; padding: .45em .6em; font-size: .82em; letter-spacing: .1em; }
+  .b:hover { background: var(--line); color: var(--bg); }
+  .b.acc { border-color: var(--accent); color: var(--accent); } .b.acc:hover { background: var(--accent); color: var(--bg); }
+  .b:disabled { opacity: .35; pointer-events: none; }
+  .note { margin-top: .6em; font-size: .7em; color: var(--soft); }
+
+  /* ---------- 特效层 ---------- */
+  #overlay { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  #stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: 50% 50%; }
+  @keyframes fadein { to { opacity: 1 } }
+  @keyframes fadeout { to { opacity: 0 } }
+  @keyframes fadeupc { from { opacity: 0; translate: -50% calc(-50% + 16px) } to { opacity: 1; translate: -50% -50% } }
+  @keyframes stampin { from { opacity: 0; scale: 1.8 } to { opacity: 1; scale: 1 } }
+  /* 幕名横幅（底部缎带） */
+  .banner { left: 960px; top: 900px; translate: -50% -50%; display: flex; align-items: center; }
+  .banner .body { white-space: nowrap; padding: 16px 90px 18px; background: var(--accent); color: var(--bg); text-align: center; clip-path: inset(0 50% 0 50%); animation: unroll .8s cubic-bezier(.6,0,.2,1) forwards, roll .5s ease-in 4.4s forwards; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+  .banner .main { font-family: var(--brush); font-size: 68px; line-height: 1.1; letter-spacing: .14em; }
+  .banner .sub { font-size: 22px; letter-spacing: .5em; opacity: .8; }
+  .banner .tail { width: 64px; height: 70px; background: color-mix(in srgb, var(--accent) 70%, black); opacity: 0; animation: fadein .3s ease .5s forwards, fadeout .3s ease 4.4s forwards; }
+  .banner .tail.l { clip-path: polygon(0 0, 100% 12%, 100% 88%, 0 100%, 28% 50%); margin-right: -6px; }
+  .banner .tail.r { clip-path: polygon(0 12%, 100% 0, 72% 50%, 100% 100%, 0 88%); margin-left: -6px; }
+  @keyframes unroll { to { clip-path: inset(0 0 0 0) } }
+  @keyframes roll { to { clip-path: inset(0 50% 0 50%); opacity: 0 } }
+  .veil { background: var(--veil); opacity: 0; animation: fadein .6s ease forwards, fadeout .8s ease var(--out, 5s) forwards; }
+  /* 计数印章 */
+  .stamp { top: 520px; display: flex; align-items: center; gap: 40px; opacity: 0; animation: stampin .5s cubic-bezier(.5,0,.6,1.5) .4s forwards, fadeout .8s ease 3.6s forwards; }
+  .stamp .n { font-family: var(--brush); font-size: 220px; line-height: 1; color: var(--bg); }
+  .stamp .k { width: 150px; height: 150px; border: 8px solid var(--accent); border-radius: 12px; color: var(--accent); display: grid; place-items: center; font-family: var(--brush); font-size: 90px; rotate: -8deg; }
+  /* 字卡 */
+  .tcard { width: 900px; padding: 60px 70px; background: var(--bg); color: var(--ink); box-shadow: 0 30px 70px rgba(0,0,0,.45), inset 0 0 0 12px var(--bg), inset 0 0 0 14px var(--line); opacity: 0; animation: fadeupc .8s ease .3s forwards, fadeout .8s ease 7.2s forwards; }
+  .tcard .k { display: inline-block; padding: 4px 16px; border-radius: 30px; background: var(--accent); color: var(--bg); font-size: 20px; letter-spacing: .4em; }
+  .tcard h3 { margin: 24px 0 16px; font-family: var(--brush); font-weight: 400; font-size: 72px; letter-spacing: .1em; }
+  .tcard p { margin: 0; font-size: 28px; line-height: 1.8; white-space: pre-line; }
+  /* 闪光 */
+  .flash { opacity: 0; animation: pulse 1.6s ease-out forwards; }
+  @keyframes pulse { 8% { opacity: .9 } 100% { opacity: 0 } }
+  .shake { animation: shake .5s; }
+  @keyframes shake { 20% { translate: 8px -6px } 40% { translate: -8px 6px } 60% { translate: 5px 3px } 80% { translate: -3px -2px } }
+</style>
+</head>
+<body>
+<div id="console" hidden>
+  <div class="card">
+    <div class="hdr"><span id="ctitle"></span><span id="sync">本地</span></div>
+    <div class="now"><div class="seal" id="cseal"></div><div><b id="cact"></b><span id="csub"></span></div></div>
+    <div class="gm" id="gm" hidden>
+      <h4>幕</h4><div class="r"><button class="b" data-a="prev">◀ 上一幕</button><button class="b acc" data-a="next">下一幕 ▶</button><button class="b" data-a="replay">重播横幅</button></div>
+      <h4 id="cntl"></h4><div class="r"><button class="b" data-a="dec">－</button><button class="b acc" data-a="inc">＋ 并盖章</button></div>
+      <h4>字卡</h4><div class="r" id="cards"></div>
+      <h4>闪光</h4><div class="r" id="flashes"></div>
+    </div>
+    <div class="note" id="note"></div>
+  </div>
+</div>
+<div id="overlay" hidden><div id="stage"><div class="fill" id="fxbox"></div></div></div>
+<script>
+const STAGE_NS = 'stage-core'
+const CONFIG = {
+  role: 'auto',
+  theme: 'taisho',
+  title: '演出核心',
+  seal: '幕',
+  acts: [
+    { name: '序幕', sub: '大正十二年 · 长月' },
+    { name: '第一幕 · 帝国酒店', sub: '舞会之夜' },
+    { name: '第二幕 · 浅草十二阶', sub: '凌云阁下' },
+    { name: '第三幕 · 雾港汽笛', sub: '终幕' }
+  ],
+  counter: { label: '巡', max: 4 },
+  cards: [
+    { id: 'clue', label: '线索', title: '一封未寄出的信', text: '信封上的邮戳是十年前的日期。\n收信人一栏，写着你的名字。' },
+    { id: 'rule', label: '规则', title: '战斗开始', text: '全员进入战斗。\n请按速度从高到低宣言情节。' }
+  ],
+  flashes: [ { id: 'blood', label: '血色', color: '#b3121f' }, { id: 'white', label: '白闪', color: '#ffffff' }, { id: 'dark', label: '暗转', color: '#000000' } ]
+}
+const THEMES = {
+  ink:     { bg: '#efe9dc', ink: '#141414', line: '#141414', accent: '#3c64b4', soft: 'rgba(20,20,20,.55)', veil: 'rgba(20,20,20,.72)' },
+  taisho:  { bg: '#efe2c8', ink: '#2a1a15', line: '#2a1a15', accent: '#b02e22', soft: 'rgba(42,26,21,.6)', veil: 'rgba(29,21,19,.78)' },
+  cosmic:  { bg: '#0e1428', ink: '#eef2fb', line: '#c9d4ec', accent: '#5b7bff', soft: 'rgba(238,242,251,.55)', veil: 'rgba(2,3,8,.8)' },
+  washi:   { bg: '#f1e3df', ink: '#5e352e', line: '#8b5247', accent: '#b34a3c', soft: 'rgba(94,53,46,.6)', veil: 'rgba(60,30,26,.66)' },
+  classic: { bg: '#efe3c6', ink: '#2a2016', line: '#3a2c1d', accent: '#c2362e', soft: 'rgba(42,32,22,.6)', veil: 'rgba(20,16,16,.78)' },
+  school:  { bg: '#fffaf2', ink: '#2c2238', line: '#3a2e48', accent: '#e0493f', soft: 'rgba(44,34,56,.6)', veil: 'rgba(30,22,44,.7)' }
+}
+const NUM = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
+
+/* <sealstage-runtime v1>
+ * SealStage —— 小剧场网页组件的统一运行时（粘贴进每个需要同步的组件）。
+ * · 在 SealChat iForm 内：通过 Channel Embed SDK 使用 Storage（持久状态）与 Events（瞬时特效）。
+ * · 独立预览时：回落到 BroadcastChannel + localStorage，本机多个标签/iframe 之间同步。
+ * · Storage / Events 的作用域是 (频道, iForm)：同一个 iForm 被多次放上舞台时共享状态。
+ * API：
+ *   Stage.ready            Promise，完成连接或回落后 resolve
+ *   Stage.mode             'sealchat' | 'local' | 'unsynced'
+ *   Stage.gm               当前用户是否为 World Owner/Admin（本地预览恒为 true，?gm=0 可模拟玩家）
+ *   Stage.get(key)         读取已同步的状态
+ *   Stage.set(key, value)  写入并广播（乐观更新）
+ *   Stage.onState(fn)      fn(key, value)，任何状态变化（含首次拉取）
+ *   Stage.emit(topic, p)   广播瞬时事件（本地立即触发一次，远端回声自动去重）
+ *   Stage.on(topic, fn)    订阅瞬时事件
+ *   Stage.onGM(fn)         GM 身份变化
+ */
+const Stage = (() => {
+  const NS = (typeof STAGE_NS === 'string' && STAGE_NS) || 'sealstage'
+  const cfg = window.__SEALCHAT_EMBED_CONFIG__ || {}
+  const q = new URLSearchParams(location.search)
+  const hostOrigin = q.get('hostOrigin') || cfg.hostOrigin || ''
+  const sdkUrl = q.get('sdkUrl') || cfg.sdkUrl || ''
+  const framed = window.parent !== window
+  const state = {}, stateFns = new Set(), gmFns = new Set(), evtFns = {}, seen = new Set(), topics = new Set()
+  let client = null, retry = 1000
+  const api = { mode: 'local', gm: q.get('gm') !== '0', ready: null }
+
+  const fireState = (k, v) => { if (v === undefined) delete state[k]; else state[k] = v; stateFns.forEach(fn => { try { fn(k, v) } catch (e) { console.error(e) } }) }
+  const fireEvt = (topic, p) => {
+    if (p && p._id) { if (seen.has(p._id)) return; seen.add(p._id); if (seen.size > 500) seen.delete(seen.values().next().value) }
+    (evtFns[topic] || []).forEach(fn => { try { fn(p || {}) } catch (e) { console.error(e) } })
+  }
+  const setGM = v => { if (api.gm === v) return; api.gm = v; gmFns.forEach(fn => fn(v)) }
+
+  /* ---------- 本地回落：BroadcastChannel + localStorage（均可能被沙箱禁止，全部 try） ---------- */
+  let bc = null
+  const lsKey = k => `${NS}:${k}`
+  const lsRead = () => { try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(NS + ':')) state[k.slice(NS.length + 1)] = JSON.parse(localStorage.getItem(k)) } } catch {} }
+  const lsWrite = (k, v) => { try { v === undefined ? localStorage.removeItem(lsKey(k)) : localStorage.setItem(lsKey(k), JSON.stringify(v)) } catch {} }
+  const local = () => {
+    try { bc = new BroadcastChannel(NS); bc.onmessage = e => { const m = e.data || {}; if (api.mode === 'sealchat') return; if (m.t === 's') fireState(m.k, m.v); else if (m.t === 'e') fireEvt(m.topic, m.p) } } catch {}
+    lsRead(); Object.keys(state).forEach(k => fireState(k, state[k]))
+  }
+  const bcPost = m => { try { bc && bc.postMessage(m) } catch {} }
+
+  /* ---------- SealChat Embed ---------- */
+  const loadSdk = () => window.SealChatEmbed ? Promise.resolve() : new Promise((res, rej) => {
+    const s = document.createElement('script'); s.src = sdkUrl; s.async = true
+    s.onload = () => window.SealChatEmbed ? res() : rej(new Error('SDK missing')); s.onerror = () => rej(new Error('SDK load failed'))
+    document.head.appendChild(s)
+  })
+  const pullAll = async () => {
+    const snap = await client.storage.snapshot()
+    const docs = (snap && (snap.documents || snap.items)) || []
+    docs.forEach(d => fireState(d.key, d.value))
+  }
+  const connect = async () => {
+    await loadSdk()
+    const c = await window.SealChatEmbed.connect({ targetOrigin: hostOrigin || undefined, timeoutMs: 10000 })
+    client = c; api.mode = 'sealchat'; retry = 1000
+    c.session.onClosed(() => { if (client !== c) return; client = null; setTimeout(() => connect().catch(reconnect), retry) })
+    c.storage.onChanged(async ch => {
+      if (!ch) return
+      if (ch.kind === 'resynced') return pullAll().catch(() => {})
+      if (!ch.key) return
+      if (ch.kind === 'delete' || ch.op === 'delete') return fireState(ch.key, undefined)
+      if ('value' in ch && ch.value !== undefined) return fireState(ch.key, ch.value)
+      const doc = await c.storage.get(ch.key).catch(() => null); fireState(ch.key, doc ? doc.value : undefined)
+    })
+    topics.forEach(t => c.events.on(t, p => fireEvt(t, p)))
+    const applyPerm = p => setGM(!!(p && (p.canManageWorld || p.isWorldAdmin || p.isWorldOwner)))
+    try { c.permissions.onChanged(applyPerm); applyPerm(await c.permissions.getCurrent()) } catch { setGM(false) }
+    await pullAll().catch(() => {})
+  }
+  const reconnect = err => {
+    const code = err && err.code
+    if (code && !['HANDSHAKE_FAILED', 'SESSION_EXPIRED', 'CONTEXT_CHANGED', 'TIMEOUT', 'WS_OFFLINE', 'INTERNAL_ERROR'].includes(code)) { console.warn('[SealStage]', code, err.message); return }
+    setTimeout(() => connect().catch(reconnect), retry); retry = Math.min(retry * 2, 30000)
+  }
+
+  api.ready = (async () => {
+    if (framed && hostOrigin && sdkUrl) {
+      api.gm = false
+      try { await connect() } catch (e) { reconnect(e) }
+    } else {
+      // 本地预览页与组件同源，可访问 parent；SealChat 里未启用 Embed API 或裸外链时访问会抛错
+      let parentSame = false
+      try { parentSame = !!window.parent.location.href } catch {}
+      if (framed && !parentSame) { api.mode = 'unsynced'; api.gm = false }
+      local()
+    }
+  })()
+
+  api.get = k => state[k]
+  api.set = async (k, v) => {
+    fireState(k, v)
+    if (client) { try { await client.storage.set(k, v) } catch (e) { console.warn('[SealStage] storage.set', e && e.code, e && e.message) } }
+    else { lsWrite(k, v); bcPost({ t: 's', k, v }) }
+  }
+  // 新订阅者立即收到当前全部状态（本地模式的初始状态在组件注册前就已读出）
+  api.onState = fn => { stateFns.add(fn); Object.keys(state).forEach(k => fn(k, state[k])); return () => stateFns.delete(fn) }
+  api.onGM = fn => { gmFns.add(fn); return () => gmFns.delete(fn) }
+  api.on = (topic, fn) => {
+    (evtFns[topic] = evtFns[topic] || []).push(fn)
+    if (!topics.has(topic)) { topics.add(topic); if (client) client.events.on(topic, p => fireEvt(topic, p)) }
+  }
+  api.emit = async (topic, payload) => {
+    const p = Object.assign({}, payload, { _id: Math.random().toString(36).slice(2) + Date.now().toString(36), _at: Date.now() })
+    fireEvt(topic, p)
+    if (client) { try { await client.events.publish(topic, p) } catch (e) { console.warn('[SealStage] events.publish', e && e.code) } }
+    else bcPost({ t: 'e', topic, p })
+  }
+  return api
+})()
+/* </sealstage-runtime> */
+
+const $ = id => document.getElementById(id)
+const qs = new URLSearchParams(location.search)
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+for (const [k, v] of Object.entries(THEMES[qs.get('theme') || CONFIG.theme] || THEMES.ink)) document.documentElement.style.setProperty('--' + k, v)
+let S = { act: 0, count: 0 }, role = null
+
+function pickRole () {
+  const want = qs.get('role') || CONFIG.role
+  const r = want === 'auto' ? (innerWidth < 800 ? 'console' : 'overlay') : want
+  if (r === role) return
+  role = r; $('console').hidden = r !== 'console'; $('overlay').hidden = r !== 'overlay'; render()
+}
+function fit () { const s = Math.max(innerWidth / 1920, innerHeight / 1080); $('stage').style.transform = `translate(-50%,-50%) scale(${s})` }
+addEventListener('resize', () => { pickRole(); fit() })
+
+/* ---------- 控制台 ---------- */
+function render () {
+  if (role !== 'console') return
+  const a = CONFIG.acts[S.act] || CONFIG.acts[0]
+  $('ctitle').textContent = CONFIG.title; $('cseal').textContent = CONFIG.seal
+  $('cact').textContent = a.name; $('csub').textContent = `${a.sub || ''}　·　第${NUM[S.count] || S.count}${CONFIG.counter.label}`
+  $('cntl').textContent = `计数 · ${CONFIG.counter.label}`
+  $('gm').hidden = !Stage.gm
+  $('note').textContent = Stage.gm ? '' : '仅 GM 可以操作。'
+  $('sync').textContent = Stage.mode === 'sealchat' ? '● 已同步' : Stage.mode === 'unsynced' ? '未启用 Embed API' : '本地预览'
+  document.querySelector('[data-a="prev"]').disabled = S.act <= 0
+  document.querySelector('[data-a="next"]').disabled = S.act >= CONFIG.acts.length - 1
+  document.querySelector('[data-a="dec"]').disabled = S.count <= 0
+  document.querySelector('[data-a="inc"]').disabled = S.count >= CONFIG.counter.max
+}
+$('cards').innerHTML = CONFIG.cards.map(c => `<button class="b" data-card="${c.id}">${esc(c.label)}</button>`).join('')
+$('flashes').innerHTML = CONFIG.flashes.map(f => `<button class="b" data-flash="${f.id}">${esc(f.label)}</button>`).join('')
+$('gm').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return
+  const n = Object.assign({}, S)
+  if (b.dataset.card) return Stage.emit('core.fx', { fx: 'card', id: b.dataset.card })
+  if (b.dataset.flash) return Stage.emit('core.fx', { fx: 'flash', id: b.dataset.flash })
+  switch (b.dataset.a) {
+    case 'prev': n.act--; Stage.set('core', n); Stage.emit('core.fx', { fx: 'act', act: n.act }); break
+    case 'next': n.act++; Stage.set('core', n); Stage.emit('core.fx', { fx: 'act', act: n.act }); break
+    case 'replay': Stage.emit('core.fx', { fx: 'act', act: n.act }); break
+    case 'dec': n.count--; Stage.set('core', n); break
+    case 'inc': n.count++; Stage.set('core', n); Stage.emit('core.fx', { fx: 'count', count: n.count }); break
+  }
+})
+
+/* ---------- 特效层 ---------- */
+function mount (html, ms) { const d = document.createElement('div'); d.className = 'fill'; d.innerHTML = html; $('fxbox').appendChild(d); setTimeout(() => d.remove(), ms); return d }
+const FX = {
+  act ({ act }) {
+    const a = CONFIG.acts[act]; if (!a) return
+    $('fxbox').querySelectorAll('.banner').forEach(b => b.parentNode.remove())
+    mount(`<div class="abs banner"><div class="tail l"></div><div class="body"><div class="main">${esc(a.name)}</div><div class="sub">${esc(a.sub || '')}</div></div><div class="tail r"></div></div>`, 5200)
+  },
+  count ({ count }) {
+    mount(`<div class="fill veil" style="--out:3.6s"></div><div class="center stamp"><span class="n">第${NUM[count] || count}</span><span class="k">${esc(CONFIG.counter.label)}</span></div>`, 4600)
+  },
+  card ({ id }) {
+    const c = CONFIG.cards.find(x => x.id === id); if (!c) return
+    mount(`<div class="fill veil" style="--out:7.2s"></div><div class="center tcard"><span class="k">${esc(c.label)}</span><h3>${esc(c.title)}</h3><p>${esc(c.text)}</p></div>`, 8200)
+  },
+  flash ({ id }) {
+    const f = CONFIG.flashes.find(x => x.id === id); if (!f) return
+    mount(`<div class="fill flash" style="background:radial-gradient(ellipse at center, ${f.color}aa, ${f.color})"></div>`, 1800)
+    const st = $('stage'); st.classList.remove('shake'); void st.offsetWidth; st.classList.add('shake')
+  }
+}
+Stage.on('core.fx', p => { if (role === 'overlay' && FX[p.fx]) FX[p.fx](p) })
+Stage.onState((k, v) => { if (k === 'core') { S = Object.assign({ act: 0, count: 0 }, v || {}); render() } })
+Stage.onGM(render)
+pickRole(); fit()
+Stage.ready.then(render)
+</script>
+</body>
+</html>

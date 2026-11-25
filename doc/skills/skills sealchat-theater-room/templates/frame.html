@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark"><!-- 跟随宿主 iframe 的配色方案，避免浏览器在 iframe 后垫不透明底色 -->
+<title>舞台框</title>
+<!--
+  SealStage · 舞台框（主背景）
+  用法：铺满舞台、置于最底层。按 1920×1080 设计、等比覆盖缩放。
+  主窗内框固定为 960×540、左上角 (480,140)（舞台宽 25%–75%、高 13%–63%），场景图对象叠在这里。
+  CONFIG.frame：scroll 卷轴 | ticket 车票 | screen 屏幕 | lattice 花窗
+  CONFIG.motifs：waves 青海波 | clouds 霞云 | orbit 星盘 | stars 星点 | moonring 月相环 | checker 市松 | ribbon 弧形缎带
+  本地预览：?theme=cosmic&frame=screen&motifs=stars,orbit
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'"><!-- 非阻塞加载：字体源不可达时先用系统字体渲染 -->
+<style>
+  :root {
+    --bg: #efe9dc; --bg2: #ddd3bf; --ink: #141414; --line: #141414; --accent: #c8322b; --soft: rgba(20,20,20,.5); --win: rgba(20,20,20,.08);
+    --brush: "Ma Shan Zheng", "STXingkai", "KaiTi", serif;
+    --serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+  #stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: 50% 50%; overflow: hidden; font-family: var(--serif); color: var(--ink);
+    background: radial-gradient(ellipse at 50% 40%, var(--bg), var(--bg2)); }
+  .abs { position: absolute; } svg { overflow: visible; }
+  .grain { inset: 0; opacity: .22; mix-blend-mode: multiply; pointer-events: none; }
+  .win { left: 480px; top: 140px; width: 960px; height: 540px; background: var(--win); }
+  .title { left: 200px; top: 150px; writing-mode: vertical-rl; font-family: var(--brush); font-size: 200px; line-height: 1; color: var(--ink); letter-spacing: -.02em; }
+  .sealbox { left: 330px; top: 640px; width: 64px; height: 64px; border-radius: 6px; background: var(--accent); color: var(--bg); display: grid; place-items: center; font-family: var(--brush); font-size: 40px; rotate: -7deg; }
+  .subv { left: 110px; top: 170px; writing-mode: vertical-rl; font-size: 22px; letter-spacing: .45em; color: var(--soft); }
+  .meta { right: 70px; top: 160px; display: flex; flex-direction: column; gap: 26px; writing-mode: vertical-rl; }
+  .meta div { font-size: 24px; letter-spacing: .3em; } .meta b { color: var(--accent); margin-bottom: .6em; display: inline-block; }
+  .latin { left: 480px; top: 700px; width: 960px; display: flex; justify-content: space-between; font-size: 16px; letter-spacing: .5em; color: var(--soft); text-transform: uppercase; }
+  .spin { animation: spin 120s linear infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+  .spin.r { animation-direction: reverse; animation-duration: 80s; }
+  @keyframes spin { to { rotate: 360deg } }
+  .drift { animation: drift 40s ease-in-out infinite alternate; }
+  @keyframes drift { to { translate: 60px 0 } }
+  .tw { animation: tw 4s ease-in-out infinite; } @keyframes tw { 50% { opacity: .25 } }
+  .sway { transform-box: fill-box; transform-origin: 50% 0; animation: sway 6s ease-in-out infinite; } @keyframes sway { 50% { rotate: 1.5deg } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+</head>
+<body>
+<div id="stage">
+  <svg class="abs" id="back" width="1920" height="1080" style="left:0;top:0"></svg>
+  <div class="abs win"></div>
+  <svg class="abs" id="frame" width="1920" height="1080" style="left:0;top:0"></svg>
+  <div class="abs subv" id="subv"></div>
+  <div class="abs title" id="title"></div>
+  <div class="abs sealbox" id="seal"></div>
+  <div class="abs meta" id="meta"></div>
+  <div class="abs latin" id="latin"></div>
+  <svg class="abs" id="front" width="1920" height="1080" style="left:0;top:0"></svg>
+  <svg class="abs grain" width="1920" height="1080" style="left:0;top:0"><filter id="gn"><feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="3" stitchTiles="stitch"/><feColorMatrix values="0 0 0 0 .1 0 0 0 0 .1 0 0 0 0 .1 0 0 0 .7 0"/></filter><rect width="1920" height="1080" filter="url(#gn)"/></svg>
+</div>
+<script>
+const CONFIG = {
+  theme: 'ink',
+  frame: 'scroll',
+  motifs: ['clouds', 'waves', 'moonring'],
+  title: '末班车',
+  seal: '怪',
+  subtitle: '都市传说 · 单程车票',
+  meta: [['类型', '协力型'], ['人数', '二人'], ['时限', '三巡']],
+  latin: ['Rules', 'Scene', 'Emotion', 'Fumble', 'Notes'],
+  ribbon: '在那个时代，人们相信着某个传说——'
+}
+const THEMES = {
+  ink:     { bg: '#efe9dc', bg2: '#ddd3bf', ink: '#141414', line: '#141414', accent: '#3c64b4', soft: 'rgba(20,20,20,.5)', win: 'rgba(20,20,20,.07)' },
+  taisho:  { bg: '#3a2b26', bg2: '#1d1513', ink: '#efe2c8', line: '#d8c4a0', accent: '#c23a2c', soft: 'rgba(239,226,200,.55)', win: 'rgba(0,0,0,.35)' },
+  cosmic:  { bg: '#0d1226', bg2: '#020308', ink: '#eef2fb', line: '#c9d4ec', accent: '#5b7bff', soft: 'rgba(238,242,251,.5)', win: 'rgba(30,50,120,.35)' },
+  washi:   { bg: '#ead9d5', bg2: '#d7c0bb', ink: '#7a453c', line: '#a0675b', accent: '#b34a3c', soft: 'rgba(122,69,60,.55)', win: 'rgba(122,69,60,.12)' },
+  classic: { bg: '#2a2321', bg2: '#141010', ink: '#e7d6ae', line: '#bfa77a', accent: '#d8433b', soft: 'rgba(231,214,174,.55)', win: 'rgba(0,0,0,.4)' },
+  school:  { bg: '#fbefe0', bg2: '#f1c9a8', ink: '#2c2238', line: '#3a2e48', accent: '#e0493f', soft: 'rgba(44,34,56,.55)', win: 'rgba(44,60,50,.75)' }
+}
+const qs = new URLSearchParams(location.search)
+if (qs.has('theme')) CONFIG.theme = qs.get('theme')
+if (qs.has('frame')) CONFIG.frame = qs.get('frame')
+if (qs.has('motifs')) CONFIG.motifs = qs.get('motifs').split(',')
+if (qs.has('title')) CONFIG.title = qs.get('title')
+if (qs.has('seal')) CONFIG.seal = qs.get('seal')
+if (qs.has('sub')) CONFIG.subtitle = qs.get('sub')
+if (qs.has('ribbon')) CONFIG.ribbon = qs.get('ribbon')
+const th = THEMES[CONFIG.theme] || THEMES.ink
+for (const [k, v] of Object.entries(th)) document.documentElement.style.setProperty('--' + k, v)
+const $ = id => document.getElementById(id)
+const NS = 'http://www.w3.org/2000/svg'
+const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e }
+let seed = 3; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+function fit () { const s = Math.max(innerWidth / 1920, innerHeight / 1080); $('stage').style.transform = `translate(-50%,-50%) scale(${s})` }
+addEventListener('resize', fit); fit()
+
+/* ---------- 主窗边框 ---------- */
+const X = 480, Y = 140, W = 960, H = 540
+const FRAMES = {
+  scroll (g) {   // 上下卷轴杆 + 纸边
+    el('rect', { x: X - 26, y: Y - 18, width: W + 52, height: H + 36, fill: 'none', stroke: th.line, 'stroke-width': 2 }, g)
+    el('rect', { x: X - 14, y: Y - 8, width: W + 28, height: H + 16, fill: 'none', stroke: th.line, 'stroke-width': 1, opacity: .5 }, g)
+    for (const y of [Y - 40, Y + H + 22]) {
+      el('rect', { x: X - 70, y, width: W + 140, height: 18, rx: 9, fill: th.line }, g)
+      for (const x of [X - 84, X + W + 70]) el('rect', { x, y: y - 4, width: 14, height: 26, rx: 4, fill: th.accent }, g)
+    }
+    el('line', { x1: X + W / 2, y1: Y - 22, x2: X + W / 2, y2: Y - 90, stroke: th.line, 'stroke-width': 1.5 }, g)
+    el('circle', { cx: X + W / 2, cy: Y - 96, r: 7, fill: th.accent }, g)
+  },
+  ticket (g) {   // 票根：齿孔、剪线、编号
+    const p = el('path', { d: `M${X - 20} ${Y - 20} H${X + W + 20} V${Y + H + 20} H${X - 20} Z`, fill: 'none', stroke: th.line, 'stroke-width': 2.4 }, g)
+    for (let y = Y; y < Y + H; y += 26) { el('circle', { cx: X - 20, cy: y + 13, r: 6, fill: th.bg }, g); el('circle', { cx: X + W + 20, cy: y + 13, r: 6, fill: th.bg }, g) }
+    el('line', { x1: X + W * .72, y1: Y - 34, x2: X + W * .72, y2: Y + H + 34, stroke: th.line, 'stroke-width': 1.6, 'stroke-dasharray': '8 8' }, g)
+    el('text', { x: X + W * .72 + 18, y: Y - 30, 'font-size': 20, fill: th.line, 'letter-spacing': 4 }, g).textContent = '✂ No.0021'
+    el('text', { x: X + 10, y: Y + H + 52, 'font-size': 18, fill: th.accent, 'letter-spacing': 8 }, g).textContent = 'ADMIT ONE · 单程'
+  },
+  screen (g) {   // 双线屏幕 + 角括号 + 吊饰
+    el('rect', { x: X - 18, y: Y - 18, width: W + 36, height: H + 36, fill: 'none', stroke: th.line, 'stroke-width': 1.4 }, g)
+    el('rect', { x: X - 8, y: Y - 8, width: W + 16, height: H + 16, fill: 'none', stroke: th.line, 'stroke-width': .8, opacity: .6 }, g)
+    for (const [cx, cy, sx, sy] of [[X - 18, Y - 18, 1, 1], [X + W + 18, Y - 18, -1, 1], [X - 18, Y + H + 18, 1, -1], [X + W + 18, Y + H + 18, -1, -1]]) {
+      el('path', { d: `M${cx} ${cy + sy * 40} V${cy} H${cx + sx * 40}`, fill: 'none', stroke: th.line, 'stroke-width': 4 }, g)
+      el('rect', { x: cx - 6, y: cy - 6, width: 12, height: 12, fill: th.bg, stroke: th.line, 'stroke-width': 1.5 }, g)
+    }
+    for (const [x, l] of [[X + 140, 90], [X + 330, 150], [X + 520, 70], [X + 760, 120]]) {
+      const gg = el('g', { class: 'sway', style: `animation-delay:-${(rnd() * 6).toFixed(1)}s` }, g)
+      el('line', { x1: x, y1: Y, x2: x, y2: Y + l, stroke: th.line, 'stroke-width': 1 }, gg)
+      el('path', { d: `M${x} ${Y + l - 10} l4 8 9 1 -7 6 2 9 -8 -5 -8 5 2 -9 -7 -6 9 -1z`, fill: 'none', stroke: th.line, 'stroke-width': 1.2 }, gg)
+    }
+    for (const x of [X - 80, X + W + 60]) el('line', { x1: x, y1: Y + H + 60, x2: x + 20, y2: Y + H + 60, stroke: th.line, 'stroke-width': 1 }, g)
+  },
+  lattice (g) {   // 花窗：回纹角 + 内外框
+    el('rect', { x: X - 30, y: Y - 30, width: W + 60, height: H + 60, fill: 'none', stroke: th.line, 'stroke-width': 3 }, g)
+    el('rect', { x: X - 12, y: Y - 12, width: W + 24, height: H + 24, fill: 'none', stroke: th.line, 'stroke-width': 1.5 }, g)
+    for (const [cx, cy, sx, sy] of [[X - 30, Y - 30, 1, 1], [X + W + 30, Y - 30, -1, 1], [X - 30, Y + H + 30, 1, -1], [X + W + 30, Y + H + 30, -1, -1]]) {
+      const d = [[0, 0, 70, 0, 70, 22, 22, 22, 22, 70, 0, 70], [36, 36, 52, 36, 52, 52, 36, 52]]
+      d.forEach(pts => el('polygon', { points: pts.reduce((a, v, i) => a + (i % 2 ? `${cy + sy * v} ` : `${cx + sx * v},`), ''), fill: 'none', stroke: th.line, 'stroke-width': 2 }, g))
+      el('rect', { x: cx + (sx > 0 ? 6 : -16), y: cy + (sy > 0 ? 6 : -16), width: 10, height: 10, fill: th.accent }, g)
+    }
+  }
+}
+
+/* ---------- 母题模块 ---------- */
+const MOTIFS = {
+  waves (b) {   // 青海波：左下 / 右下出血
+    const id = 'sg'
+    el('defs', {}, b).innerHTML = `<pattern id="${id}" width="80" height="40" patternUnits="userSpaceOnUse">${[0, 40, 80].map(x => [36, 26, 16, 6].map(r => `<circle cx="${x}" cy="40" r="${r}" fill="${r === 36 ? th.bg2 : 'none'}" stroke="${th.line}" stroke-width="2" opacity=".55"/>`).join('')).join('')}${[36, 26, 16, 6].map(r => `<circle cx="40" cy="20" r="${r}" fill="${r === 36 ? th.bg2 : 'none'}" stroke="${th.line}" stroke-width="2" opacity=".55"/>`).join('')}</pattern>`
+    el('path', { d: 'M0 1080 V880 C 120 860, 260 900, 380 960 C 440 990, 460 1040, 470 1080 Z', fill: `url(#${id})` }, b)
+    el('path', { d: 'M1920 1080 V820 C 1800 830, 1640 900, 1560 980 C 1520 1020, 1500 1060, 1496 1080 Z', fill: `url(#${id})` }, b)
+  },
+  clouds (b) {   // 霞云：阶梯圆角条，缓慢漂移
+    for (const [x, y, w, k] of [[60, 90, 360, 1], [1480, 760, 380, -1], [1500, 150, 300, -1], [80, 740, 300, 1]]) {
+      const g = el('g', { class: 'drift', style: `animation-delay:-${(rnd() * 40).toFixed(0)}s` }, b)
+      ;[[0, 0, w], [k * 40, 26, w * .7], [k * -30, 52, w * .5]].forEach(([dx, dy, ww]) => el('rect', { x: x + dx, y: y + dy, width: ww, height: 22, rx: 11, fill: th.line, opacity: .85 }, g))
+    }
+  },
+  orbit (b) {   // 星盘：右上出血，双层反向旋转
+    const g = el('g', { transform: 'translate(1760 140)' }, b)
+    const r1 = el('g', { class: 'spin' }, g), r2 = el('g', { class: 'spin r' }, g)
+    el('circle', { r: 230, fill: 'none', stroke: th.line, 'stroke-width': 1.5, opacity: .6 }, r1)
+    for (let i = 0; i < 72; i++) { const a = i * 5 * Math.PI / 180; el('line', { x1: Math.cos(a) * 214, y1: Math.sin(a) * 214, x2: Math.cos(a) * (i % 6 ? 224 : 206), y2: Math.sin(a) * (i % 6 ? 224 : 206), stroke: th.line, 'stroke-width': 1.2, opacity: .7 }, r1) }
+    for (let i = 0; i < 12; i++) { const a = i * 30 * Math.PI / 180; el('circle', { cx: Math.cos(a) * 160, cy: Math.sin(a) * 160, r: 12, fill: 'none', stroke: th.line, opacity: .6 }, r2); el('line', { x1: 0, y1: 0, x2: Math.cos(a) * 148, y2: Math.sin(a) * 148, stroke: th.line, 'stroke-width': .6, opacity: .35 }, r2) }
+    el('circle', { r: 46, fill: th.accent, opacity: .85 }, g)
+  },
+  stars (b) {
+    for (let i = 0; i < 140; i++) el('circle', { cx: rnd() * 1920, cy: rnd() * 1080, r: .6 + rnd() * 1.6, fill: th.line, class: rnd() < .4 ? 'tw' : '', style: `animation-delay:-${(rnd() * 4).toFixed(1)}s`, opacity: .3 + rnd() * .6 }, b)
+  },
+  moonring (b) {   // 月相环：右侧大环绕行
+    const g = el('g', { transform: 'translate(1640 560)' }, b), r = el('g', { class: 'spin' }, g)
+    el('circle', { r: 330, fill: 'none', stroke: th.bg, 'stroke-width': 26, opacity: .9 }, r)
+    for (let i = 0; i < 14; i++) {
+      const a = i / 14 * Math.PI * 2, x = Math.cos(a) * 330, y = Math.sin(a) * 330, ph = Math.cos(a) * 26
+      el('circle', { cx: x, cy: y, r: 34, fill: th.line }, r); el('circle', { cx: x + ph, cy: y - 4, r: 32, fill: th.bg }, r)
+    }
+  },
+  checker (b) {  // 市松纹：左右两条竖带
+    for (const x0 of [0, 1860]) for (let y = 0; y < 1080; y += 30) for (let x = 0; x < 60; x += 30) if (((x + y) / 30) % 2 === 0) el('rect', { x: x0 + x, y, width: 30, height: 30, fill: th.line, opacity: .55 }, b)
+  },
+  ribbon (b, f) {  // 弧形缎带标语（顶部）
+    el('defs', {}, f).innerHTML = '<path id="rb" d="M 420 120 Q 960 -10 1500 120"/>'
+    el('path', { d: 'M 420 120 Q 960 -10 1500 120', stroke: th.accent, 'stroke-width': 56, fill: 'none', 'stroke-linecap': 'butt' }, f)
+    el('path', { d: 'M 420 120 Q 960 -10 1500 120', stroke: th.bg, 'stroke-width': 2, fill: 'none', 'stroke-dasharray': '6 6', transform: 'translate(0 -20)' }, f)
+    const t = el('text', { 'font-size': 30, fill: th.bg, 'letter-spacing': 6, dy: 10 }, f), tp = el('textPath', { href: '#rb', startOffset: '50%', 'text-anchor': 'middle' }, t)
+    tp.textContent = CONFIG.ribbon
+  }
+}
+
+;(FRAMES[CONFIG.frame] || FRAMES.scroll)($('frame'))
+CONFIG.motifs.forEach(m => MOTIFS[m] && MOTIFS[m]($('back'), $('front')))
+$('title').textContent = CONFIG.title
+$('seal').textContent = CONFIG.seal
+$('subv').textContent = CONFIG.subtitle
+$('meta').innerHTML = CONFIG.meta.map(([k, v]) => `<div><b>${k}</b>${v}</div>`).join('')
+$('latin').innerHTML = CONFIG.latin.map(t => `<span>${t}</span>`).join('')
+</script>
+</body>
+</html>

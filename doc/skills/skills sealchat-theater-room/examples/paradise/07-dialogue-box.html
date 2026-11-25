@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>乐园 · 孔版会志 · 对话框底图</title>
+<!--
+  《乐园》孔版会志房间 · 对话框底图设计源（不是 iForm 组件）
+  概念：从会志上剪下来的一条——再生纸条、蓝 / 粉两块版套色错位、右端是花边剪刀剪出的锯齿，
+        深蓝名札用订书钉钉在纸条上，上沿是印刷用的套准标记、色标和一道裁切虚线。
+  模式：默认 = 设计台（参考线 + 舞台合成预览）；?mode=export = 只画底图；?mode=stage = 按 SealChat 排版叠示例文字
+  变体：?variant=night = 印在深蓝纸上的夜版（高潮场景用）
+  导出：python3 ../../skills/sealchat-theater-room/scripts/export_png.py 07-dialogue-box.html dialogue-box.png
+        python3 ../../skills/sealchat-theater-room/scripts/export_png.py 07-dialogue-box.html dialogue-box-night.png --query "variant=night"
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<style>
+  :root { --paper: #f3eee2; --blue: #0078bf; --pink: #ff48b0; --tag: #1b2350; --text: #1f2b5c; --blend: multiply;
+    --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif; --mono: "Space Mono", ui-monospace, Menlo, Consolas, monospace; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; }
+  #art { position: relative; width: 1920px; height: 336px; transform-origin: 0 0; }
+  #art > svg { position: absolute; left: 0; top: 0; overflow: visible; }
+  #art text { font-family: var(--sans); fill: currentColor; } #art .mono { font-family: var(--mono); }
+  #pinkp { mix-blend-mode: var(--blend); }
+
+  body.export, body.stage { overflow: hidden; }
+  body.export .ui, body.export .guide, body.export .sample { display: none !important; }
+  body.stage .ui, body.stage .guide { display: none !important; }
+  body.stage #art { position: absolute; left: 50%; top: 50%; transform-origin: 50% 50%; }
+  .sample { position: absolute; inset: 0; pointer-events: none; font-family: system-ui, "Noto Sans CJK SC", "PingFang SC", sans-serif; }
+  .sample .spk { position: absolute; left: 2.5%; top: 6.5%; width: 34%; height: 12%; display: flex; align-items: center; font-weight: 600; white-space: nowrap; color: #ffb7d9; }
+  .sample .txt { position: absolute; left: 2.5%; top: 28%; width: 95%; height: 68%; color: var(--text); line-height: 1.5; white-space: pre-wrap; }
+
+  body.preview { min-height: 100vh; padding: 24px; background: #15182a; color: #e8ebf5; font: 14px/1.7 "Noto Sans SC", "PingFang SC", sans-serif; }
+  .ui h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: .3em; }
+  .ui h2 { margin: 26px 0 10px; font-size: 13px; letter-spacing: .3em; color: #9aa3c0; font-weight: 400; }
+  .ui p { color: #9aa3c0; font-size: 13px; }
+  .ui code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; color: #e8ebf5; }
+  .ui label { cursor: pointer; margin-right: 14px; } .ui a { color: #ff9ad0; }
+  .board { position: relative; width: 100%; aspect-ratio: 1920 / 336; overflow: hidden; border-radius: 6px; background: repeating-conic-gradient(#363b52 0 25%, #2a2e42 0 50%) 0 0 / 24px 24px; }
+  .guide { position: absolute; border: 2px dashed; pointer-events: none; font: 600 18px/1 system-ui, sans-serif; padding: 6px 8px; }
+  .guide.spk { left: 48px; top: 21.8px; width: 652.8px; height: 40.3px; border-color: #7fd1ff; color: #7fd1ff; }
+  .guide.txt { left: 48px; top: 94px; width: 1824px; height: 228.5px; border-color: #3fbf5a; color: #3fbf5a; }
+  .guide.btn { right: 0; top: 0; width: 180px; height: 90px; border-color: #ff8f7e; color: #ff8f7e; background: repeating-linear-gradient(45deg, rgba(255,143,126,.18) 0 8px, transparent 8px 16px); }
+  body.noguide .guide { display: none; }
+  .scene { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 6px; background: #000; }
+  .scene .s { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+  .scene iframe { position: absolute; border: 0; background: transparent; pointer-events: none; }
+  table { border-collapse: collapse; font-size: 13px; } td, th { border: 1px solid #343a55; padding: 4px 10px; text-align: left; } th { color: #9aa3c0; font-weight: 400; }
+</style>
+</head>
+<body>
+<div class="ui">
+  <h1>乐园 · 孔版会志 · 对话框底图</h1>
+  <p>1920×336 透明底，对应 SealChat 默认对话框（舞台宽 90% × 高 28%）。棋盘格 = 透明区域。蓝框 = 名字区，绿框 = 正文区，红斜线 = 跳过 / 关闭按钮区。
+    当前：<b id="vname"></b>　切换 <a href="?variant=day">日版</a> · <a href="?variant=night">夜版</a></p>
+  <p><label><input type="checkbox" id="g" checked>显示参考线</label><label><input type="checkbox" id="smp" checked>示例文字</label></p>
+</div>
+<div class="ui board" id="board"></div>
+<div id="art">
+  <svg id="bluep" width="1920" height="336" viewBox="0 0 1920 336"></svg>
+  <svg id="pinkp" width="1920" height="336" viewBox="0 0 1920 336"></svg>
+  <svg id="top" width="1920" height="336" viewBox="0 0 1920 336"></svg>
+  <div class="guide spk">名字</div><div class="guide txt">正文</div><div class="guide btn">按钮</div>
+  <div class="sample"><div class="spk">水波薰</div><div class="txt">"会志的封面印好啦！你看你看，粉色和蓝色叠在一起的地方，是紫色的哦。"
+"……好像有一点点没对齐？没关系，明天再印一张就好了。"</div></div>
+</div>
+<div class="ui">
+  <h2>舞台合成预览（主舞台 + 对话框，SealChat 默认位置）</h2>
+  <div class="scene" id="scene"><div class="s"><iframe id="bg" style="left:0;top:0;width:1920px;height:1080px"></iframe><iframe id="onstage" style="left:96px;top:745.2px;width:1728px;height:302.4px"></iframe></div></div>
+  <h2>SealChat 设置（小剧场外观 → 对话框）</h2>
+  <table>
+    <tr><th>项</th><th>日版</th><th>夜版</th></tr>
+    <tr><td>对话框图片</td><td><code>dialogue-box.png</code></td><td><code>dialogue-box-night.png</code></td></tr>
+    <tr><td>对话框位置 / 名字区 / 正文区</td><td colspan="2">保持默认（X 0.05 · Y 0.69 · 宽 0.9 · 高 0.28）</td></tr>
+    <tr><td>正文颜色</td><td><b>改为 <code>#1F2B5C</code></b>（纸面是浅色）</td><td>保持默认 <code>#F4F4F5</code> 或 <code>#F3EEE2</code></td></tr>
+    <tr><td>名字颜色</td><td colspan="2">跟随角色色；名札是深蓝底，浅色 / 荧光系角色色最清晰</td></tr>
+  </table>
+</div>
+<script>
+const qs = new URLSearchParams(location.search)
+const MODE = qs.get('mode') || 'preview'
+const NIGHT = qs.get('variant') === 'night'
+document.body.className = MODE
+const $ = id => document.getElementById(id)
+const root = document.documentElement.style
+if (NIGHT) { root.setProperty('--paper', '#141a3d'); root.setProperty('--blue', '#9ab8ee'); root.setProperty('--pink', '#ff4fb6'); root.setProperty('--tag', '#0a0e26'); root.setProperty('--text', '#f3eee2'); root.setProperty('--blend', 'screen') }
+if ($('vname')) $('vname').textContent = NIGHT ? '夜版（深蓝纸）' : '日版（再生纸）'
+
+function dots (x0, y0, x1, y1, step, ang, f) {
+  const a = ang * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, R = Math.hypot(x1 - x0, y1 - y0) / 2 + step
+  let d = ''
+  for (let u = -R; u <= R; u += step) for (let v = -R; v <= R; v += step) {
+    const x = cx + u * c - v * s, y = cy + u * s + v * c
+    if (x < x0 || x > x1 || y < y0 || y > y1) continue
+    const r = f(x, y) * step * .56; if (r < .7) continue
+    d += `M${(x - r).toFixed(1)} ${y.toFixed(1)}a${r.toFixed(1)} ${r.toFixed(1)} 0 1 0 ${(2 * r).toFixed(1)} 0a${r.toFixed(1)} ${r.toFixed(1)} 0 1 0 ${(-2 * r).toFixed(1)} 0`
+  }
+  return d
+}
+const clamp = v => Math.max(0, Math.min(1, v))
+
+/* ---------- 纸条轮廓：左直边，右端花边剪刀的锯齿 ---------- */
+const X0 = 14, Y0 = 46, X1 = 1880, Y1 = 322
+function panel () {
+  let d = `M${X0} ${Y0} H${X1}`
+  for (let y = Y0, i = 0; y < Y1; y += 12, i++) d += ` L${X1 + (i % 2 ? 0 : 14)} ${Math.min(y + 12, Y1)}`
+  return d + ` L${X1} ${Y1} H${X0} Z`
+}
+const P = panel()
+const crop = [[X0, Y0, -1, -1], [X0, Y1, -1, 1]].map(([x, y, sx, sy]) => `<path d="M${x + sx * 4} ${y} h${sx * 10} M${x} ${y + sy * 4} v${sy * 10}" stroke="currentColor" stroke-width="1.2"/>`).join('')
+const target = (x, y, r) => `<g stroke="currentColor" stroke-width="1.3" fill="none"><circle cx="${x}" cy="${y}" r="${r}"/><circle cx="${x}" cy="${y}" r="${r * .45}"/><path d="M${x - r * 1.7} ${y} H${x + r * 1.7} M${x} ${y - r * 1.7} V${y + r * 1.7}"/></g>`
+
+$('bluep').innerHTML = `
+  <defs><clipPath id="cp"><path d="${P}"/></clipPath>
+    <filter id="sk" x="0" y="0" width="1920" height="336" filterUnits="userSpaceOnUse"><feTurbulence type="fractalNoise" baseFrequency=".045 .6" numOctaves="3" seed="11"/><feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -14 4.6"/><feComposite in="SourceGraphic" operator="in"/></filter>
+    <filter id="gr"><feTurbulence type="fractalNoise" baseFrequency=".6" numOctaves="3" seed="4"/><feColorMatrix values="0 0 0 0 ${NIGHT ? '.6 0 0 0 0 .65 0 0 0 0 .8 0 0 0 .08' : '.35 0 0 0 0 .3 0 0 0 0 .22 0 0 0 .18'} 0"/></filter></defs>
+  <path d="${P}" fill="var(--paper)" style="filter:drop-shadow(0 6px 10px rgba(10,14,38,.35))"/>
+  <g clip-path="url(#cp)" style="color:var(--blue)">
+    <rect x="${X0 + 8}" y="${Y0 + 8}" width="${X1 - X0 - 16}" height="${Y1 - Y0 - 16}" fill="none" stroke="currentColor" stroke-width="3"/>
+    <rect x="${X0 + 15}" y="${Y0 + 15}" width="${X1 - X0 - 30}" height="${Y1 - Y0 - 30}" fill="none" stroke="currentColor" stroke-width="1"/>
+    <g stroke="currentColor" stroke-width="1" opacity="${NIGHT ? .07 : .09}">${Array.from({ length: 8 }, (_, i) => `<path d="M40 ${112 + i * 26} H1856"/>`).join('')}</g>
+    <path d="M610 76 H1720" stroke="currentColor" stroke-width="1.5" stroke-dasharray="8 6" opacity=".55"/>
+    <text x="596" y="82" font-size="18" text-anchor="end" opacity=".6">✂</text>
+    <text x="1720" y="68" font-size="12" class="mono" text-anchor="end" letter-spacing="3" opacity=".7">キリトリ · CUT HERE</text>
+  </g>
+  <g style="color:var(--blue)">
+    ${crop}
+    ${target(1260, 22, 9)}
+    <rect x="1290" y="14" width="16" height="16" fill="currentColor"/><path d="${dots(1310, 14, 1326, 30, 4, 15, () => .5)}" fill="currentColor"/><rect x="1370" y="14" width="16" height="16" fill="currentColor"/>
+    <text x="640" y="30" font-size="13" class="mono" letter-spacing="4">RAKUEN · No.30 · ${NIGHT ? 'LAST NIGHT' : 'SEP. 30'}</text>
+  </g>`
+$('pinkp').innerHTML = `
+  <g style="color:var(--pink)">
+    <g clip-path="url(#cp)">
+      <path d="${dots(X0, 180, 760, Y1, 12, 75, (x, y) => clamp((y - 180) / 140 * .75 - (x - X0) / 760 * .6))}" fill="currentColor" opacity=".7"/>
+      <rect x="${X0 + 12}" y="${Y0 + 11}" width="${X1 - X0 - 16}" height="${Y1 - Y0 - 16}" fill="none" stroke="currentColor" stroke-width="2" opacity=".7"/>
+      <g transform="translate(1790 262) rotate(-12)" opacity=".28"><circle r="30" fill="none" stroke="currentColor" stroke-width="3"/><circle r="24" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="2 3"/>
+        <path transform="scale(.95)" d="M-12 14 C-20 4 -12 -6 -2 -4 C-4 -18 -6 -26 -2 -27 C2 -27 3 -16 2 -6 C4 -14 8 -24 12 -23 C15 -22 10 -10 6 -3 C14 0 18 10 12 16 Z" fill="currentColor"/></g>
+    </g>
+    <rect x="1330" y="14" width="16" height="16" fill="currentColor"/><path d="${dots(1350, 14, 1366, 30, 4, 75, () => .5)}" fill="currentColor"/><rect x="1370" y="14" width="16" height="16" fill="currentColor"/>
+    <path d="M${X0 + 30} ${Y1 + 6} H760" stroke="currentColor" stroke-width="4" stroke-linecap="round" opacity=".8"/>
+  </g>`
+$('pinkp').style.transform = 'translate(4px,3px)'
+// 名札、订书钉、漏墨白点与纸纹（在两块版之上）
+$('top').innerHTML = `
+  <g clip-path="url(#cp)"><path d="${P}" fill="var(--paper)" filter="url(#sk)" opacity=".7"/><rect width="1920" height="336" filter="url(#gr)" style="mix-blend-mode:${NIGHT ? 'screen' : 'multiply'}"/></g>
+  <path d="M30 14 H548 L560 26 V70 H30 Z" fill="var(--tag)"/>
+  <path d="M30 70 H560" stroke="var(--pink)" stroke-width="3"/>
+  <rect x="34" y="18" width="5" height="48" fill="var(--pink)"/>
+  <g><rect x="286" y="6" width="74" height="7" rx="2" fill="#a9b0b8"/><rect x="286" y="6" width="74" height="2.5" rx="1" fill="#e6eaee"/></g>
+  <text x="554" y="62" font-size="11" class="mono" text-anchor="end" fill="#9ab8ee" opacity=".7">MEMBER</text>`
+
+/* ---------- 模式 ---------- */
+function fitStage () {   // 与 SealChat 一致：底图 cover 铺满对话框，文字按对话框尺寸排版
+  const W = innerWidth, H = innerHeight, k = Math.max(W / 1920, H / 336)
+  $('art').style.transform = `translate(-50%,-50%) scale(${k})`
+  const smp = document.querySelector('.sample')
+  Object.assign(smp.style, { left: `${(1920 - W / k) / 2}px`, top: `${(336 - H / k) / 2}px`, width: `${W / k}px`, height: `${H / k}px`, inset: 'auto' })
+  const comp = W / .9, base = Math.min(16, Math.max(12, comp * .00833))
+  smp.querySelector('.txt').style.fontSize = `${base * 1.2 / k}px`
+  smp.querySelector('.spk').style.fontSize = `${H * .12 * .85 / k}px`
+}
+if (MODE === 'stage') { addEventListener('resize', fitStage); fitStage() }
+if (MODE === 'preview') {
+  $('board').appendChild($('art'))
+  const fit = () => {
+    $('art').style.transform = `scale(${$('board').clientWidth / 1920})`
+    $('scene').firstElementChild.style.transform = `scale(${$('scene').clientWidth / 1920})`
+    const smp = document.querySelector('#art .sample')
+    smp.querySelector('.txt').style.fontSize = `${16 * 1.2 / .9}px`
+    smp.querySelector('.spk').style.fontSize = `${336 * .12 * .85}px`
+  }
+  new ResizeObserver(fit).observe($('board')); fit()
+  $('bg').src = NIGHT ? '03-stage-night.html' : '02-stage-day.html'
+  $('onstage').src = location.pathname + '?mode=stage' + (NIGHT ? '&variant=night' : '')
+  $('g').onchange = e => document.body.classList.toggle('noguide', !e.target.checked)
+  $('smp').onchange = e => document.querySelector('#art .sample').style.display = e.target.checked ? '' : 'none'
+}
+</script>
+</body>
+</html>

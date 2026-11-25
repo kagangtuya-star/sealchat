@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>乐园 · 孔版会志 · 时牢核心</title>
+<!--
+  《乐园》孔版会志房间 · 时牢核心（同一个 iForm，按尺寸切换角色；需要启用 Embed API）
+  · 宽 < 800px：GM 控制台（"印刷机操作面板"）。推荐在聊天侧以浮窗打开（约 420×660）。
+  · 铺满舞台：同步特效层（置顶、不可交互）。所有特效都是印刷动作：
+      开始一巡 = 送纸；时牢发动 = 再印刷（奥付续上"第 N 刷 · 九月三十日"）；惨剧 = 卡纸；
+      公开谜团 = 剪开密封页；高潮 = 纸张撕裂；八岐 = 八道网点墨痕；
+      结局·时间流动 = 翻到"十月一日"那一页，订正贴纸盖住旧日期；结局·永远的乐园 = 第∞刷。
+  · 奥付续写的位置与主舞台（02/03）的奥付对齐：右翼 (1466, 664) 起。
+  · Storage key `loop`，Events topic `rk.fx`。
+  本地预览：?role=console 或 ?role=overlay；?gm=0 模拟玩家视角。
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=ZCOOL+QingKe+HuangYou&family=Noto+Sans+SC:wght@400;700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<style>
+  :root {
+    --paper: #f3eee2; --blue: #0078bf; --pink: #ff48b0; --navy: #141a3d; --ink: #1f2b5c;
+    --disp: "ZCOOL QingKe HuangYou", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: "Space Mono", ui-monospace, Menlo, Consolas, monospace;
+    --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 .3 0 0 0 0 .26 0 0 0 0 .2 0 0 0 .22 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font-family: var(--sans); }
+  [hidden] { display: none !important; }
+  .mono { font-family: var(--mono); }
+
+  /* ================= 控制台：印刷机操作面板 ================= */
+  #console { position: fixed; inset: 0; display: flex; flex-direction: column; gap: 10px; padding: 14px; color: var(--ink); background: var(--paper) var(--grain); font-size: 14px; overflow: auto; }
+  .ph { display: flex; align-items: baseline; gap: 8px; border-bottom: 2px solid var(--blue); padding-bottom: 6px; }
+  .ph b { font: 900 18px var(--sans); letter-spacing: .15em; color: var(--blue); }
+  .ph small { font: 11px var(--mono); letter-spacing: .2em; color: var(--blue); opacity: .7; }
+  .ph .sp { flex: 1; }
+  #sync { font: 11px var(--mono); color: #1a8a55; } #sync::before { content: "● "; } #sync.off { color: #b0563a; }
+  .lcd { position: relative; display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; align-items: end; padding: 12px 14px; border-radius: 6px; background: #1d2a1f; color: #b8f5a0; font-family: var(--mono); box-shadow: inset 0 0 0 3px #0f160f, inset 0 0 24px rgba(0,0,0,.6); }
+  .lcd::after { content: ""; position: absolute; inset: 0; border-radius: 6px; background: repeating-linear-gradient(0deg, rgba(0,0,0,.18) 0 1px, transparent 1px 3px); pointer-events: none; }
+  .lcd .run { grid-row: span 2; font-size: 46px; line-height: .9; font-weight: 700; text-shadow: 0 0 8px rgba(184,245,160,.5); }
+  .lcd .run small { font-size: 15px; margin-left: 2px; }
+  .lcd .l1 { font-size: 15px; letter-spacing: .08em; } .lcd .l2 { font-size: 12px; opacity: .75; letter-spacing: .1em; }
+  .pages { display: flex; gap: 5px; align-items: center; }
+  .pages i { flex: 1; height: 26px; border: 1.5px solid var(--blue); border-radius: 3px; display: grid; place-items: center; font: 700 12px var(--mono); color: var(--blue); font-style: normal; background: var(--paper); transition: background .2s, color .2s; }
+  .pages i.gm { border-style: dashed; } .pages i.battle { border-color: var(--pink); color: var(--pink); }
+  .pages i.done { background: color-mix(in srgb, var(--blue) 22%, var(--paper)); }
+  .pages i.now { background: var(--blue); color: var(--paper); } .pages i.battle.now { background: var(--pink); }
+  .runs { display: flex; gap: 6px; align-items: center; font: 12px var(--mono); color: var(--blue); }
+  .runs span { flex: 1; text-align: center; padding: 3px 0; border-bottom: 3px solid color-mix(in srgb, var(--blue) 20%, transparent); }
+  .runs span.on { border-color: var(--blue); font-weight: 700; } .runs span.doom { color: var(--pink); border-color: var(--pink); }
+  #gm { display: flex; flex-direction: column; gap: 7px; }
+  .r { display: flex; gap: 7px; } .r > * { flex: 1; }
+  .lbl { font: 11px var(--mono); letter-spacing: .25em; color: var(--blue); opacity: .75; margin-top: 4px; }
+  .b { border: 1.5px solid var(--blue); background: var(--paper); color: var(--blue); border-radius: 4px; padding: 8px 6px; font: 700 13px var(--sans); letter-spacing: .06em; cursor: pointer; box-shadow: 0 3px 0 color-mix(in srgb, var(--blue) 70%, black); transition: translate .08s, box-shadow .08s, background .2s; }
+  .b:active { translate: 0 3px; box-shadow: none; }
+  .b:hover { background: color-mix(in srgb, var(--blue) 12%, var(--paper)); }
+  .b.go { background: var(--blue); color: var(--paper); }
+  .b.pk { border-color: var(--pink); color: var(--pink); box-shadow: 0 3px 0 #b02a77; } .b.pk.go { background: var(--pink); color: #fff; }
+  .b:disabled { opacity: .32; cursor: default; translate: 0 0; }
+  .b.arm { background: var(--pink); border-color: var(--pink); color: #fff; animation: blink .5s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .65 } }
+  .note { font-size: 12px; line-height: 1.6; color: var(--ink); opacity: .75; min-height: 1em; }
+
+  /* ================= 特效层 ================= */
+  #overlay { position: fixed; inset: 0; pointer-events: none; }
+  #stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: 50% 50%; overflow: hidden; }
+  .fill { position: absolute; inset: 0; }
+  .fill > svg, svg.fill { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; }
+  .abs { position: absolute; }
+  .center { position: absolute; translate: -50% -50%; }
+  .fx { position: absolute; inset: 0; }
+  .slip { background: var(--paper) var(--grain); color: var(--blue); box-shadow: 0 18px 40px rgba(20,26,61,.35); padding: 26px 44px; text-align: center; }
+  .slip .k { font: 13px var(--mono); letter-spacing: .4em; opacity: .75; }
+  .slip .sub { font-size: 24px; font-weight: 700; letter-spacing: .3em; margin-top: 6px; }
+  /* 双版套印：蓝版是网点阴影，粉版实地正片叠底；入场时两块版从远处滑到"差一点点对齐" */
+  .dup { position: relative; display: inline-block; font-family: var(--disp); line-height: 1; }
+  .dup .bl { display: block; color: transparent; background: radial-gradient(circle, var(--blue) 42%, transparent 46%) 0 0 / .055em .055em; -webkit-background-clip: text; background-clip: text; animation: regB 1.1s cubic-bezier(.2,1.4,.4,1) both; animation-delay: inherit; }
+  .dup .pk { position: absolute; left: 0; top: 0; color: var(--pink); mix-blend-mode: multiply; animation: regP 1.1s cubic-bezier(.2,1.4,.4,1) both; animation-delay: inherit; }
+  @keyframes regB { from { transform: translate(40px, -26px); opacity: 0 } 30% { opacity: 1 } to { transform: translate(.05em, .05em) } }
+  @keyframes regP { from { transform: translate(-30px, 22px); opacity: 0 } 30% { opacity: 1 } to { transform: translate(0, 0) } }
+
+  .feed { animation: feed var(--d, 4.6s) cubic-bezier(.25,.8,.25,1) both; }
+  @keyframes feed { 0% { transform: translateY(-900px) rotate(-3deg) } 16% { transform: translateY(0) rotate(-1deg) } 84% { transform: translateY(0) rotate(-1deg); opacity: 1 } 100% { transform: translateY(900px) rotate(2deg); opacity: 0 } }
+  .roller { position: absolute; left: -10%; right: -10%; height: 120px; top: -140px; background: linear-gradient(transparent, color-mix(in srgb, var(--blue) 25%, transparent) 40%, color-mix(in srgb, var(--pink) 30%, transparent) 60%, transparent); animation: roll .9s ease-in both; }
+  @keyframes roll { to { top: 110% } }
+  .fade { animation: fade var(--d, 4s) ease both; }
+  @keyframes fade { 0% { opacity: 0 } 12% { opacity: 1 } 80% { opacity: 1 } 100% { opacity: 0 } }
+  .stamp { animation: stamp .55s cubic-bezier(.2,1.6,.4,1) both; }
+  @keyframes stamp { from { transform: scale(2.4) rotate(-8deg); opacity: 0 } 60% { opacity: 1 } }
+  .shake { animation: shake .5s steps(6) both; }
+  @keyframes shake { 20% { transform: translate(-14px, 6px) } 40% { transform: translate(12px, -8px) } 60% { transform: translate(-8px, 4px) } 80% { transform: translate(6px, -2px) } }
+  .draw { stroke-dasharray: var(--len, 3000); stroke-dashoffset: var(--len, 3000); animation: draw var(--dd, 1.2s) cubic-bezier(.5,0,.2,1) forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0 } }
+
+  /* 场景标签 */
+  .tab { display: flex; align-items: center; gap: 14px; padding: 10px 26px; background: var(--paper) var(--grain); border: 2px solid var(--blue); color: var(--blue); font: 700 24px var(--sans); letter-spacing: .12em; box-shadow: 5px 4px 0 var(--pink); animation: tabIn 4s cubic-bezier(.2,1.3,.4,1) both; }
+  .tab i { font: 700 15px var(--mono); font-style: normal; letter-spacing: .3em; opacity: .7; }
+  .tab em { font-style: normal; font-size: 18px; color: #fff; background: var(--pink); padding: 2px 10px; }
+  .tab em.gm { background: var(--blue); }
+  @keyframes tabIn { 0% { transform: translateY(-120px) } 12% { transform: translateY(0) } 85% { transform: translateY(0); opacity: 1 } 100% { transform: translateY(-120px); opacity: 0 } }
+
+  /* 再印刷 */
+  .band { position: absolute; left: 0; right: 0; height: 180px; background: var(--paper) var(--grain); box-shadow: 0 0 40px rgba(20,26,61,.3); animation: band .8s cubic-bezier(.5,0,.5,1) both; }
+  .band::before, .band::after { content: ""; position: absolute; left: 0; right: 0; height: 3px; top: 40%; background: var(--blue); opacity: .5; }
+  .band::after { top: 62%; background: var(--pink); }
+  @keyframes band { from { transform: translateY(-300px) } to { transform: translateY(1400px) } }
+  .counter .big { font-size: 190px; }
+  .newrun { animation: stamp .55s 2.3s cubic-bezier(.2,1.6,.4,1) both; }
+
+  /* 卡纸 */
+  .err { position: absolute; left: 40px; top: 150px; padding: 8px 14px; background: #1d2a1f; color: #ff9a9a; font: 700 22px var(--mono); letter-spacing: .1em; animation: blink .4s steps(2) 6, fade 7s ease both; }
+  .trag { font-size: 54px; font-weight: 900; letter-spacing: .14em; color: var(--blue); padding: 28px 56px; }
+  .trag span { display: inline-block; animation: stamp .4s cubic-bezier(.2,1.6,.4,1) both; }
+
+  /* 密封页 */
+  .bag { width: 440px; height: 560px; perspective: 1400px; animation: bagIn 10.5s cubic-bezier(.3,1.1,.4,1) both; }
+  @keyframes bagIn { 0% { transform: translateY(800px) rotate(6deg) } 8% { transform: translateY(0) rotate(-1deg) } 90% { transform: translateY(0) rotate(-1deg); opacity: 1 } 100% { transform: translateY(800px) rotate(4deg); opacity: 0 } }
+  .bag .pg { position: absolute; inset: 0; background: var(--paper) var(--grain); color: var(--blue); padding: 40px 36px; box-shadow: 0 20px 40px rgba(20,26,61,.35); }
+  .bag .pg .k { font: 13px var(--mono); letter-spacing: .35em; color: var(--pink); }
+  .bag .pg h3 { margin: 14px 0 16px; font: 400 60px var(--disp); }
+  .bag .pg p { margin: 0; font-size: 21px; line-height: 1.8; }
+  .bag .cover { transform-origin: 0 50%; backface-visibility: hidden; background: color-mix(in srgb, var(--pink) 85%, white) var(--grain); color: #fff; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; animation: open .9s 2.9s cubic-bezier(.5,0,.3,1) both; }
+  .bag .cover h3 { font-size: 92px; margin: 10px 0; } .bag .cover .k { color: #fff; }
+  .bag .cover::after { content: ""; position: absolute; top: 0; bottom: 0; right: 18px; border-right: 3px dashed rgba(255,255,255,.85); }
+  .bag .scis { position: absolute; right: 2px; top: -10px; font-size: 40px; color: #fff; rotate: 90deg; animation: cut 1.3s 1.3s linear both; }
+  @keyframes cut { from { top: -20px; opacity: 0 } 10% { opacity: 1 } 95% { opacity: 1 } to { top: 520px; opacity: 0 } }
+  @keyframes open { to { transform: rotateY(-170deg); } }
+
+  /* 撕裂 / 八岐 / 结局 */
+  .tear { transform-box: fill-box; transform-origin: 50% 50%; animation: tearOpen 1.6s .3s cubic-bezier(.3,0,.2,1) both; }
+  @keyframes tearOpen { from { transform: scaleX(0); clip-path: inset(0 0 100% 0) } 40% { clip-path: inset(0 0 0 0) } to { transform: scaleX(1); clip-path: inset(0 0 0 0) } }
+  .fleck { animation: fall var(--t, 3s) ease-in both; }
+  @keyframes fall { from { transform: translate(0, 0) rotate(0) } to { transform: translate(var(--dx, 40px), 900px) rotate(var(--r, 300deg)); opacity: 0 } }
+  .navyslip { background: var(--navy); color: var(--pink); box-shadow: 0 0 0 2px var(--pink), 0 0 60px rgba(255,72,176,.45); padding: 26px 60px; text-align: center; }
+  .navyslip .k { font: 15px var(--mono); letter-spacing: .4em; color: #9ab8ee; }
+  .navyslip .big { font: 400 120px var(--disp); line-height: 1.1; }
+  .turn { transform-origin: 100% 50%; animation: turn 6.5s cubic-bezier(.3,.8,.3,1) both; background: var(--paper) var(--grain); color: var(--blue); display: grid; place-items: center; text-align: center; }
+  @keyframes turn { 0% { transform: perspective(2400px) rotateY(95deg) } 22% { transform: perspective(2400px) rotateY(0) } 85% { opacity: 1 } 100% { opacity: 0 } }
+  .chad { position: absolute; border-radius: 50%; animation: chad var(--t, 3s) cubic-bezier(.2,.6,.4,1) both; }
+  @keyframes chad { from { transform: translate(0, 0) } to { transform: translate(var(--dx), var(--dy)); opacity: 0 } }
+  .ghost { position: absolute; font: 400 260px var(--disp); color: var(--blue); white-space: nowrap; translate: -50% -50%; animation: ghost 7s ease both; }
+  @keyframes ghost { 0% { opacity: 0 } 20% { opacity: var(--o) } 100% { opacity: calc(var(--o) * .6) } }
+
+  /* 常驻：奥付续写（订正贴纸）、结局印章、吃墨不匀 */
+  .fix { position: absolute; width: 414px; height: 18px; display: flex; align-items: center; gap: 8px; padding: 0 6px; background: var(--paper); color: var(--blue); font-size: 13px; box-shadow: 0 1px 2px rgba(20,26,61,.35); }
+  .fix b { font: 700 13px var(--mono); color: var(--pink); }
+  .fix .dots { flex: 1; border-bottom: 2px dotted currentColor; opacity: .55; margin-bottom: -4px; }
+  .fix.correct { outline: 1.5px solid var(--pink); }
+  .seal { position: absolute; width: 190px; height: 190px; border-radius: 50%; border: 5px solid var(--pink); color: var(--pink); display: grid; place-items: center; text-align: center; rotate: -14deg; background: color-mix(in srgb, var(--paper) 60%, transparent); }
+  .seal::before { content: ""; position: absolute; inset: 8px; border-radius: 50%; border: 1.5px dashed currentColor; }
+  .seal b { display: block; font: 400 36px var(--disp); line-height: 1.1; } .seal small { font: 700 13px var(--mono); letter-spacing: .2em; }
+  .seal.blue { color: var(--blue); border-color: var(--blue); }
+  .skip { position: absolute; height: 10px; background: linear-gradient(90deg, transparent, var(--paper) 15%, var(--paper) 85%, transparent); opacity: .55; }
+  .streak { position: absolute; left: 0; width: 1920px; height: 3px; background: var(--pink); opacity: .7; animation: fade .35s both; }
+  .wash { background: var(--paper); mix-blend-mode: screen; }
+  @media (prefers-reduced-motion: reduce) { .dup .bl, .dup .pk { animation: fade 1s both } .feed, .bag, .tab { animation-name: fade } .shake { animation: none } }
+</style>
+</head>
+<body>
+<div id="console" hidden>
+  <div class="ph"><b>时牢 · 操作面板</b><small>RISO</small><span class="sp"></span><span id="sync">本地预览</span></div>
+  <div class="lcd"><div class="run" id="crun">--</div><div class="l1" id="cl1"></div><div class="l2" id="cl2"></div></div>
+  <div class="pages" id="pages"></div>
+  <div class="runs" id="runs"></div>
+  <div id="gm">
+    <div class="lbl">PRINT · 巡与场景</div>
+    <div class="r"><button class="b go" data-a="start">开始第一巡（送纸）</button></div>
+    <div class="r"><button class="b" data-a="prev">◀ 上一场景</button><button class="b go" data-a="next">下一场景 ▶</button></div>
+    <div class="r"><button class="b pk" data-a="tragedy">惨剧（卡纸）</button><button class="b" data-a="rewind">时牢发动 ⟲ 再印刷</button></div>
+    <div class="r"><button class="b" data-a="mystery">公开谜团（剪开密封页）</button></div>
+    <div class="lbl">CLIMAX · 高潮与结局</div>
+    <div class="r"><button class="b pk go" data-a="climax">进入高潮（撕裂）</button><button class="b pk" data-a="orochi">八岐</button></div>
+    <div class="r"><button class="b" data-a="flow">结局 · 时间流动</button><button class="b pk" data-a="eternal">结局 · 永远的乐园</button></div>
+    <div class="r"><button class="b" data-a="reset" style="flex:0 0 auto;padding:6px 14px">重置</button></div>
+  </div>
+  <div class="note" id="note"></div>
+</div>
+<div id="overlay" hidden><div id="stage"><div class="fill" id="persist"></div><div class="fill" id="fxbox"></div></div></div>
+
+<script>
+const STAGE_NS = 'paradise-riso-core'
+const CONFIG = {
+  role: 'auto',            // auto | console | overlay（auto：宽度 < 800px 为控制台）
+  rounds: 4,               // 时限
+  sceneKinds: { 1: 'GM 场景', 4: 'GM 场景', 7: '战斗场景' },
+  tragedyText: '于是，九月三十日结束了。',
+  mysteries: [
+    { name: '清陵学园', text: '县里首屈一指的升学学校。平时忙于学习的学生们，只有在文化祭之前的这段时间才会放肆起来。' },
+    { name: '文化祭的小道具', text: 'PC 们的同好会公开发表的东西。其中隐藏的是……？' }
+  ]
+}
+const NUM = ['零', '一', '二', '三', '四', '五', '六', '七']
+
+/* <sealstage-runtime v1>
+ * SealStage —— 小剧场网页组件的统一运行时（粘贴进每个需要同步的组件）。
+ * · 在 SealChat iForm 内：通过 Channel Embed SDK 使用 Storage（持久状态）与 Events（瞬时特效）。
+ * · 独立预览时：回落到 BroadcastChannel + localStorage，本机多个标签/iframe 之间同步。
+ * · Storage / Events 的作用域是 (频道, iForm)：同一个 iForm 被多次放上舞台时共享状态。
+ * API：
+ *   Stage.ready            Promise，完成连接或回落后 resolve
+ *   Stage.mode             'sealchat' | 'local' | 'unsynced'
+ *   Stage.gm               当前用户是否为 World Owner/Admin（本地预览恒为 true，?gm=0 可模拟玩家）
+ *   Stage.get(key)         读取已同步的状态
+ *   Stage.set(key, value)  写入并广播（乐观更新）
+ *   Stage.onState(fn)      fn(key, value)，任何状态变化（含首次拉取）
+ *   Stage.emit(topic, p)   广播瞬时事件（本地立即触发一次，远端回声自动去重）
+ *   Stage.on(topic, fn)    订阅瞬时事件
+ *   Stage.onGM(fn)         GM 身份变化
+ */
+const Stage = (() => {
+  const NS = (typeof STAGE_NS === 'string' && STAGE_NS) || 'sealstage'
+  const cfg = window.__SEALCHAT_EMBED_CONFIG__ || {}
+  const q = new URLSearchParams(location.search)
+  const hostOrigin = q.get('hostOrigin') || cfg.hostOrigin || ''
+  const sdkUrl = q.get('sdkUrl') || cfg.sdkUrl || ''
+  const framed = window.parent !== window
+  const state = {}, stateFns = new Set(), gmFns = new Set(), evtFns = {}, seen = new Set(), topics = new Set()
+  let client = null, retry = 1000
+  const api = { mode: 'local', gm: q.get('gm') !== '0', ready: null }
+
+  const fireState = (k, v) => { if (v === undefined) delete state[k]; else state[k] = v; stateFns.forEach(fn => { try { fn(k, v) } catch (e) { console.error(e) } }) }
+  const fireEvt = (topic, p) => {
+    if (p && p._id) { if (seen.has(p._id)) return; seen.add(p._id); if (seen.size > 500) seen.delete(seen.values().next().value) }
+    (evtFns[topic] || []).forEach(fn => { try { fn(p || {}) } catch (e) { console.error(e) } })
+  }
+  const setGM = v => { if (api.gm === v) return; api.gm = v; gmFns.forEach(fn => fn(v)) }
+
+  /* ---------- 本地回落：BroadcastChannel + localStorage（均可能被沙箱禁止，全部 try） ---------- */
+  let bc = null
+  const lsKey = k => `${NS}:${k}`
+  const lsRead = () => { try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(NS + ':')) state[k.slice(NS.length + 1)] = JSON.parse(localStorage.getItem(k)) } } catch {} }
+  const lsWrite = (k, v) => { try { v === undefined ? localStorage.removeItem(lsKey(k)) : localStorage.setItem(lsKey(k), JSON.stringify(v)) } catch {} }
+  const local = () => {
+    try { bc = new BroadcastChannel(NS); bc.onmessage = e => { const m = e.data || {}; if (api.mode === 'sealchat') return; if (m.t === 's') fireState(m.k, m.v); else if (m.t === 'e') fireEvt(m.topic, m.p) } } catch {}
+    lsRead(); Object.keys(state).forEach(k => fireState(k, state[k]))
+  }
+  const bcPost = m => { try { bc && bc.postMessage(m) } catch {} }
+
+  /* ---------- SealChat Embed ---------- */
+  const loadSdk = () => window.SealChatEmbed ? Promise.resolve() : new Promise((res, rej) => {
+    const s = document.createElement('script'); s.src = sdkUrl; s.async = true
+    s.onload = () => window.SealChatEmbed ? res() : rej(new Error('SDK missing')); s.onerror = () => rej(new Error('SDK load failed'))
+    document.head.appendChild(s)
+  })
+  const pullAll = async () => {
+    const snap = await client.storage.snapshot()
+    const docs = (snap && (snap.documents || snap.items)) || []
+    docs.forEach(d => fireState(d.key, d.value))
+  }
+  const connect = async () => {
+    await loadSdk()
+    const c = await window.SealChatEmbed.connect({ targetOrigin: hostOrigin || undefined, timeoutMs: 10000 })
+    client = c; api.mode = 'sealchat'; retry = 1000
+    c.session.onClosed(() => { if (client !== c) return; client = null; setTimeout(() => connect().catch(reconnect), retry) })
+    c.storage.onChanged(async ch => {
+      if (!ch) return
+      if (ch.kind === 'resynced') return pullAll().catch(() => {})
+      if (!ch.key) return
+      if (ch.kind === 'delete' || ch.op === 'delete') return fireState(ch.key, undefined)
+      if ('value' in ch && ch.value !== undefined) return fireState(ch.key, ch.value)
+      const doc = await c.storage.get(ch.key).catch(() => null); fireState(ch.key, doc ? doc.value : undefined)
+    })
+    topics.forEach(t => c.events.on(t, p => fireEvt(t, p)))
+    const applyPerm = p => setGM(!!(p && (p.canManageWorld || p.isWorldAdmin || p.isWorldOwner)))
+    try { c.permissions.onChanged(applyPerm); applyPerm(await c.permissions.getCurrent()) } catch { setGM(false) }
+    await pullAll().catch(() => {})
+  }
+  const reconnect = err => {
+    const code = err && err.code
+    if (code && !['HANDSHAKE_FAILED', 'SESSION_EXPIRED', 'CONTEXT_CHANGED', 'TIMEOUT', 'WS_OFFLINE', 'INTERNAL_ERROR'].includes(code)) { console.warn('[SealStage]', code, err.message); return }
+    setTimeout(() => connect().catch(reconnect), retry); retry = Math.min(retry * 2, 30000)
+  }
+
+  api.ready = (async () => {
+    if (framed && hostOrigin && sdkUrl) {
+      api.gm = false
+      try { await connect() } catch (e) { reconnect(e) }
+    } else {
+      // 本地预览页与组件同源，可访问 parent；SealChat 里未启用 Embed API 或裸外链时访问会抛错
+      let parentSame = false
+      try { parentSame = !!window.parent.location.href } catch {}
+      if (framed && !parentSame) { api.mode = 'unsynced'; api.gm = false }
+      local()
+    }
+  })()
+
+  api.get = k => state[k]
+  api.set = async (k, v) => {
+    fireState(k, v)
+    if (client) { try { await client.storage.set(k, v) } catch (e) { console.warn('[SealStage] storage.set', e && e.code, e && e.message) } }
+    else { lsWrite(k, v); bcPost({ t: 's', k, v }) }
+  }
+  // 新订阅者立即收到当前全部状态（本地模式的初始状态在组件注册前就已读出）
+  api.onState = fn => { stateFns.add(fn); Object.keys(state).forEach(k => fn(k, state[k])); return () => stateFns.delete(fn) }
+  api.onGM = fn => { gmFns.add(fn); return () => gmFns.delete(fn) }
+  api.on = (topic, fn) => {
+    (evtFns[topic] = evtFns[topic] || []).push(fn)
+    if (!topics.has(topic)) { topics.add(topic); if (client) client.events.on(topic, p => fireEvt(topic, p)) }
+  }
+  api.emit = async (topic, payload) => {
+    const p = Object.assign({}, payload, { _id: Math.random().toString(36).slice(2) + Date.now().toString(36), _at: Date.now() })
+    fireEvt(topic, p)
+    if (client) { try { await client.events.publish(topic, p) } catch (e) { console.warn('[SealStage] events.publish', e && e.code) } }
+    else bcPost({ t: 'e', topic, p })
+  }
+  return api
+})()
+/* </sealstage-runtime> */
+
+const $ = id => document.getElementById(id)
+const qs = new URLSearchParams(location.search)
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+const DEFAULT = { phase: 'intro', round: 0, scene: 0, mystery: false, ending: null }
+let S = Object.assign({}, DEFAULT)
+let role = null
+
+/* ---------- 角色：按尺寸自动切换 ---------- */
+function pickRole () {
+  const want = qs.get('role') || CONFIG.role
+  const r = want === 'auto' ? (innerWidth < 800 ? 'console' : 'overlay') : want
+  if (r === role) return
+  role = r
+  $('console').hidden = r !== 'console'; $('overlay').hidden = r !== 'overlay'
+  render()
+}
+function fit () { const s = Math.max(innerWidth / 1920, innerHeight / 1080); $('stage').style.transform = `translate(-50%,-50%) scale(${s})` }
+addEventListener('resize', () => { pickRole(); fit() })
+
+/* ================= 控制台 ================= */
+function renderConsole () {
+  const { phase, round, scene, ending } = S
+  $('crun').innerHTML = phase === 'intro' ? '初版' : phase === 'climax' ? '破绽' : phase === 'ending' ? (ending === 'flow' ? '第2版' : '第∞<small>刷</small>') : `第${round}<small>刷</small>`
+  $('cl1').textContent = phase === 'ending' && ending === 'flow' ? '十月一日 · 清陵祭当日' : phase === 'climax' ? '高潮阶段 · 终焉之夜' : phase === 'intro' ? '导入阶段 · 社团教室' : `第${NUM[round]}巡 · 九月三十日`
+  $('cl2').textContent = phase === 'loop' ? (scene ? `SCENE ${scene}/7 · ${CONFIG.sceneKinds[scene] || '剧情场景'}` : '巡开始 · 等待场景') : phase === 'ending' ? '结局' : '——'
+  $('pages').innerHTML = Array.from({ length: 7 }, (_, i) => {
+    const n = i + 1, k = CONFIG.sceneKinds[n]
+    const cls = [k === '战斗场景' ? 'battle' : k ? 'gm' : '', phase === 'loop' && n < scene ? 'done' : '', phase === 'loop' && n === scene ? 'now' : ''].join(' ')
+    return `<i class="${cls}" title="${k || '剧情场景'}">${n}</i>`
+  }).join('')
+  const done = phase === 'ending' && ending === 'eternal' ? CONFIG.rounds + 1 : phase === 'intro' ? 0 : round
+  $('runs').innerHTML = Array.from({ length: CONFIG.rounds + 1 }, (_, i) => `<span class="${i < done ? (i === CONFIG.rounds ? 'doom' : 'on') : ''}">${i === CONFIG.rounds ? '∞' : '第' + (i + 1) + '刷'}</span>`).join('')
+  $('gm').hidden = !Stage.gm
+  const btn = a => document.querySelector(`[data-a="${a}"]`)
+  btn('start').parentNode.hidden = phase !== 'intro'
+  btn('prev').disabled = phase !== 'loop' || scene <= 1
+  btn('next').disabled = phase !== 'loop' || scene >= 7
+  btn('rewind').disabled = phase !== 'loop' || round >= CONFIG.rounds
+  btn('tragedy').disabled = phase === 'intro'
+  btn('mystery').disabled = S.mystery || phase === 'intro'
+  btn('climax').disabled = phase === 'climax' || phase === 'ending' || phase === 'intro'
+  btn('orochi').disabled = phase !== 'climax'
+  $('note').textContent = phase === 'loop' && round >= CONFIG.rounds ? '最后一刷：第四巡结束前若进入高潮，就从这里撕开；否则——第∞刷。' : (Stage.gm ? '' : '仅 GM 可以操作时牢。')
+  const sync = $('sync'), m = Stage.mode
+  sync.classList.toggle('off', m !== 'sealchat'); sync.textContent = m === 'sealchat' ? '已同步' : m === 'unsynced' ? '未启用 Embed API' : '本地预览'
+}
+
+/* GM 操作 = 写状态 + 发特效事件 */
+let armed = null, armTimer = 0
+function act (a) {
+  const n = Object.assign({}, S)
+  const fx = p => Stage.emit('rk.fx', p)
+  switch (a) {
+    case 'start': Object.assign(n, { phase: 'loop', round: 1, scene: 0 }); Stage.set('loop', n); fx({ fx: 'round', round: 1 }); break
+    case 'next': n.scene = Math.min(7, n.scene + 1); Stage.set('loop', n); fx({ fx: 'scene', round: n.round, scene: n.scene }); break
+    case 'prev': n.scene = Math.max(1, n.scene - 1); Stage.set('loop', n); break
+    case 'tragedy': fx({ fx: 'tragedy', round: n.round }); break
+    case 'mystery': n.mystery = true; Stage.set('loop', n); fx({ fx: 'mystery' }); break
+    case 'rewind': n.round = Math.min(CONFIG.rounds, n.round + 1); n.scene = 0; Stage.set('loop', n); fx({ fx: 'rewind', round: n.round }); break
+    case 'climax': Object.assign(n, { phase: 'climax' }); Stage.set('loop', n); fx({ fx: 'climax' }); break
+    case 'orochi': fx({ fx: 'orochi' }); break
+    case 'flow': case 'eternal': Object.assign(n, { phase: 'ending', ending: a }); Stage.set('loop', n); fx({ fx: 'ending', kind: a }); break
+    case 'reset': Stage.set('loop', Object.assign({}, DEFAULT)); break
+  }
+}
+$('gm').addEventListener('click', e => {
+  const b = e.target.closest('[data-a]'); if (!b || b.disabled) return
+  const a = b.dataset.a
+  if (['reset', 'eternal', 'flow'].includes(a) && armed !== b) {   // 二次确认（sandbox 内不能用 confirm）
+    if (armed) { armed.classList.remove('arm'); armed.textContent = armed.dataset.label }
+    armed = b; b.dataset.label = b.textContent; b.classList.add('arm'); b.textContent = '再按一次确认'
+    clearTimeout(armTimer); armTimer = setTimeout(() => { b.classList.remove('arm'); b.textContent = b.dataset.label; armed = null }, 3000)
+    return
+  }
+  if (armed) { armed.classList.remove('arm'); armed.textContent = armed.dataset.label; armed = null }
+  act(a)
+})
+
+/* ================= 特效层 ================= */
+const box = () => $('fxbox')
+function mount (cls, html, ms) {
+  const d = document.createElement('div'); d.className = 'fx ' + cls; d.innerHTML = html
+  box().appendChild(d); if (ms) setTimeout(() => d.remove(), reduced ? Math.min(ms, 3000) : ms)
+  return d
+}
+const R = (a, b) => a + Math.random() * (b - a)
+const dup = (t, size, delay = 0) => `<span class="dup" style="font-size:${size}px;animation-delay:${delay}s"><span class="bl">${t}</span><span class="pk" aria-hidden="true">${t}</span></span>`
+// 打孔机落下的纸屑（粉 / 蓝 / 叠印紫）
+function chads (n, x, y, spread = 900) {
+  const C = ['var(--pink)', 'var(--blue)', '#7a3f9a']
+  return Array.from({ length: n }, () => {
+    const s = R(8, 18), a = R(0, Math.PI * 2), d = R(spread * .3, spread)
+    return `<i class="chad" style="left:${x}px;top:${y}px;width:${s}px;height:${s}px;background:${C[Math.random() * 3 | 0]};--dx:${Math.cos(a) * d}px;--dy:${Math.sin(a) * d * .6 + R(200, 500)}px;--t:${R(1.8, 3.6)}s"></i>`
+  }).join('')
+}
+// 网点图案（八岐的墨痕用）
+const htDefs = `<defs>
+  <pattern id="hp" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(75)"><circle cx="7" cy="7" r="5" fill="#ff48b0"/></pattern>
+  <pattern id="hb" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(15)"><circle cx="7" cy="7" r="5" fill="#0078bf"/></pattern>
+  <filter id="rough"><feTurbulence type="fractalNoise" baseFrequency=".012 .05" numOctaves="3" seed="5"/><feDisplacementMap in="SourceGraphic" scale="70"/></filter></defs>`
+
+function fxScene ({ round, scene }) {
+  const kind = CONFIG.sceneKinds[scene] || '剧情场景'
+  mount('', `<div class="center" style="left:960px;top:54px"><div class="tab">第${NUM[round]}巡<i>SCENE</i>${scene} / 7${kind !== '剧情场景' ? `<em class="${kind === 'GM 场景' ? 'gm' : ''}">${kind}</em>` : ''}</div></div>`, 4200)
+}
+function fxRound ({ round }) {
+  mount('', `<div class="center" style="left:960px;top:470px"><div class="slip feed" style="--d:4.8s;position:relative;overflow:hidden;width:1000px">
+    <div class="k">PRINT RUN ${String(round).padStart(2, '0')} · 送纸</div>
+    <div style="margin:14px 0 4px">${dup(`第${NUM[round]}巡`, 150, .5)}</div>
+    <div class="sub">九月三十日 · 文化祭前一天</div><div class="roller"></div></div></div>`, 5000)
+}
+let justPrinted = 0
+function fxRewind ({ round }) {
+  justPrinted = round
+  const bands = Array.from({ length: 6 }, (_, i) => `<div class="band" style="animation-delay:${i * .13}s;height:${R(140, 220)}px"></div>`).join('')
+  mount('', `${bands}
+    <div class="center fade" style="left:960px;top:480px;--d:4.6s;animation-delay:.8s"><div class="slip counter" style="padding:30px 70px">
+      <div class="k">RE-PRINT · 时牢</div>
+      <div style="margin:10px 0">${dup(`第${round}刷`, 190, 1)}</div>
+      <div class="sub mono" style="letter-spacing:.25em">09.30　00:00:00</div></div></div>`, 6000)
+  renderPersist()
+}
+function fxTragedy () {
+  const len = 2600
+  const drips = Array.from({ length: 7 }, (_, i) => { const x = 260 + i * 230 + R(-40, 40), y = 430 + R(-30, 60); return `<path class="draw" style="--len:400;--dd:${R(1.4, 2.4)}s;animation-delay:${1 + R(0, .8)}s" d="M${x} ${y} V${y + R(140, 360)}" stroke="var(--pink)" stroke-width="${R(10, 24)}" stroke-linecap="round" fill="none"/>` }).join('')
+  const creases = Array.from({ length: 9 }, (_, i) => { const a = i / 9 * Math.PI * 2 + R(-.2, .2), l = R(380, 900); return `<path class="draw" style="--len:${l};--dd:.5s;animation-delay:${.15 + i * .04}s" d="M1240 470 L${1240 + Math.cos(a) * l} ${470 + Math.sin(a) * l}" stroke="rgba(255,255,255,.75)" stroke-width="2" fill="none"/><path class="draw" style="--len:${l};--dd:.5s;animation-delay:${.15 + i * .04}s" d="M1243 473 L${1243 + Math.cos(a) * l} ${473 + Math.sin(a) * l}" stroke="rgba(20,26,61,.35)" stroke-width="1.5" fill="none"/>` }).join('')
+  const text = [...CONFIG.tragedyText].map((c, i) => `<span style="animation-delay:${2.4 + i * .13}s">${c}</span>`).join('')
+  mount('shake', `<svg class="fill" viewBox="0 0 1920 1080">${htDefs}
+      <g class="fade" style="--d:8.5s">${creases}
+      <g filter="url(#rough)"><path class="draw" style="--len:${len};--dd:.9s;animation-delay:.25s" d="M-120 420 C 380 330, 760 540, 1240 460 S 1820 560, 2060 480" stroke="var(--pink)" stroke-width="150" stroke-linecap="round" fill="none" opacity=".92"/>${drips}</g></g></svg>
+    <div class="err">E-30　卡纸 · PAPER JAM</div>
+    <div class="center fade" style="left:960px;top:700px;--d:8s;animation-delay:2s"><div class="slip trag">${text}</div></div>`, 9000)
+}
+function fxMystery () {
+  const n = CONFIG.mysteries.length
+  mount('', CONFIG.mysteries.map((m, i) => `
+    <div class="center" style="left:${960 + (i - (n - 1) / 2) * 520}px;top:430px"><div class="bag" style="animation-delay:${i * .25}s">
+      <div class="pg"><div class="k">谜团 · ${i + 1}</div><h3>${m.name}</h3><p>${m.text}</p></div>
+      <div class="pg cover" style="animation-delay:${2.9 + i * .3}s"><div class="k">FUKURO-TOJI</div><h3>密封页</h3><div style="font-size:22px;letter-spacing:.2em">谜团 · 沿虚线剪开</div><span class="scis" style="animation-delay:${1.3 + i * .3}s">✂</span></div>
+    </div></div>`).join(''), 11000)
+}
+// 撕裂线：一条锯齿路径，左右各推开 w 形成缺口
+function tearPath (x0, x1, w) {
+  const pts = []; for (let y = -20; y <= 1100; y += 36) pts.push([x0 + (x1 - x0) * (y / 1080) + R(-22, 22), y])
+  const L = pts.map(([x, y]) => `${x - w - R(0, 8)},${y}`), Rr = pts.slice().reverse().map(([x, y]) => `${x + w + R(0, 8)},${y}`)
+  return `M${L.join(' L')} L${Rr.join(' L')} Z`
+}
+function fxClimax () {
+  const fl = Array.from({ length: 26 }, () => `<rect class="fleck" x="${R(1050, 1250)}" y="${R(0, 600)}" width="${R(8, 22)}" height="${R(5, 14)}" fill="${Math.random() < .5 ? 'var(--paper)' : 'var(--pink)'}" style="--t:${R(2, 4)}s;--dx:${R(-160, 160)}px;--r:${R(-500, 500)}deg;animation-delay:${R(.5, 1.6)}s;transform-box:fill-box"/>`).join('')
+  mount('shake', `<svg class="fill" viewBox="0 0 1920 1080">
+      <g class="fade" style="--d:6.5s"><path class="tear" d="${tearPath(1170, 1080, 26)}" fill="var(--navy)" stroke="var(--pink)" stroke-width="4" style="filter:drop-shadow(0 0 14px #ff48b0)"/></g>${fl}</svg>
+    <div class="center fade" style="left:960px;top:540px;--d:6.5s;animation-delay:1.6s"><div class="navyslip"><div class="k">TEAR · 时牢</div><div class="big">「时牢」出现了破绽</div><div class="k" style="margin-top:8px;color:var(--pink)">乐园 · 终焉</div></div></div>`, 7000)
+}
+function fxOrochi () {
+  const paths = Array.from({ length: 8 }, (_, i) => {
+    const x = 170 + i * 226 + R(-30, 30), amp = R(70, 140), top = R(80, 260)
+    let d = `M${x} 1160`; for (let y = 1160, k = 0; y > top; y -= 180, k++) d += ` Q${x + (k % 2 ? -amp : amp)} ${y - 90} ${x + R(-20, 20)} ${y - 180}`
+    return `<path class="draw" style="--len:1800;--dd:1.5s;animation-delay:${i * .12}s;mix-blend-mode:multiply" d="${d}" stroke="url(#${i % 2 ? 'hb' : 'hp'})" stroke-width="${R(56, 84)}" stroke-linecap="round" fill="none"/>`
+  }).join('')
+  mount('', `<svg class="fill fade" viewBox="0 0 1920 1080" style="--d:7s">${htDefs}${paths}</svg>
+    <div class="center" style="left:960px;top:520px"><div class="stamp" style="animation-delay:1.4s">${dup('八岐', 300, 1.4)}</div></div>`, 7500)
+}
+function fxEnding ({ kind }) {
+  if (kind === 'flow') {
+    mount('', `<div class="fill turn"><div>
+        <div class="mono" style="font-size:20px;letter-spacing:.5em">NEXT PAGE · 第2版</div>
+        <div style="margin:20px 0">${dup('十月一日', 240, 1.2)}</div>
+        <div style="font-size:40px;font-weight:900;letter-spacing:.4em">清陵祭 · 当日</div>
+        <div class="mono" style="margin-top:26px;font-size:18px;letter-spacing:.3em;opacity:.7">第2版　十月一日 发行</div></div>
+        ${chads(60, 960, 420)}</div>`, 6800)
+  } else {
+    const ghosts = Array.from({ length: 7 }, (_, i) => `<div class="ghost" style="left:${960 + i * 9}px;top:${500 + i * 7}px;--o:${(.5 - i * .06).toFixed(2)};animation-delay:${i * .35}s;color:${i % 2 ? 'var(--pink)' : 'var(--blue)'}">第∞刷</div>`).join('')
+    mount('', `${ghosts}
+      <div class="center fade" style="left:960px;top:700px;--d:7s;animation-delay:2.4s"><div class="slip"><div class="sub">九月三十日 · 九月三十日 · 九月三十日</div></div></div>`, 7200)
+  }
+  setTimeout(renderPersist, reduced ? 0 : 2400)
+}
+
+/* ---------- 常驻层 ---------- */
+let streakTimer = 0
+function renderPersist () {
+  const p = $('persist'); if (!p) return
+  const { phase, round, ending } = S
+  const runs = phase === 'intro' ? 1 : Math.max(1, round)   // 高潮 / 结局沿用进入时的刷次（模组变体可在任一巡进入高潮）
+  let h = ''
+  // 奥付：第 2–4 刷贴在主舞台奥付的空行上（订正贴纸）
+  for (let r = 2; r <= Math.min(runs, CONFIG.rounds); r++) {
+    h += `<div class="fix${r === justPrinted ? ' newrun' : ''}" style="left:1466px;top:${683 + (r - 2) * 19}px"><b>第${r}刷</b><span class="dots"></span>九月三十日 发行</div>`
+  }
+  // 吃墨不匀：越往后的刷次，两翼越淡、越花
+  const fade = phase === 'loop' ? Math.max(0, round - 1) : phase === 'ending' && ending === 'eternal' ? 6 : 0
+  if (fade) {
+    let s = 30 + fade
+    const rr = () => (s = (s * 16807) % 2147483647) / 2147483647
+    for (let i = 0; i < fade * 3; i++) {
+      const left = rr() < .5, y = 60 + rr() * 640
+      h += `<div class="skip" style="left:${left ? 0 : 1450}px;width:${left ? 470 : 470}px;top:${y}px;height:${4 + rr() * 12}px"></div>`
+    }
+  }
+  if (phase === 'climax' || (phase === 'ending' && ending === 'flow')) {
+    h += `<svg class="fill" viewBox="0 0 1920 1080"><path d="M1166 -10 L1150 40 L1180 72 L1158 120 L1168 138" stroke="var(--pink)" stroke-width="3" fill="none"/><path d="M1090 1080 L1102 1056 L1080 1040" stroke="var(--pink)" stroke-width="3" fill="none"/></svg>`
+  }
+  if (phase === 'ending' && ending === 'flow') {
+    h += `<div class="fix correct" style="left:1466px;top:664px"><b>第2版</b><span class="dots"></span>十月一日 发行</div>
+      <div class="seal" style="left:385px;top:45px"><div><small>SEIRYO-SAI</small><b>十月一日</b><small>清陵祭 当日</small></div></div>`
+  }
+  if (phase === 'ending' && ending === 'eternal') {
+    for (let r = 5; r <= 13; r++) h += `<div class="fix" style="left:${1466 + (r % 3) * 4}px;top:${640 + (r - 5) * 11}px;rotate:${(r % 2 ? 1 : -1) * (r - 4) * .4}deg;opacity:${(1 - (r - 5) * .07).toFixed(2)}"><b>第${r === 13 ? '∞' : r}刷</b><span class="dots"></span>九月三十日 发行</div>`
+    h += `<div class="fill wash" style="opacity:.28"></div>
+      <div class="seal blue" style="left:385px;top:45px"><div><small>REPRINT</small><b>第∞刷</b><small>永远的乐园</small></div></div>`
+  }
+  p.innerHTML = h
+  justPrinted = 0
+  // 第三巡以后：偶尔有一道粉色辊痕一闪而过
+  clearTimeout(streakTimer)
+  if (phase === 'loop' && round >= 3 && !reduced) {
+    const loop = () => { streakTimer = setTimeout(() => { const g = document.createElement('div'); g.className = 'streak'; g.style.top = R(60, 740) + 'px'; p.appendChild(g); setTimeout(() => g.remove(), 400); loop() }, R(20000, 45000) / (round >= 4 ? 1.6 : 1)) }
+    loop()
+  }
+}
+
+const FX = { scene: fxScene, round: fxRound, rewind: fxRewind, tragedy: fxTragedy, mystery: fxMystery, climax: fxClimax, orochi: fxOrochi, ending: fxEnding }
+Stage.on('rk.fx', p => { if (role === 'overlay' && FX[p.fx]) FX[p.fx](p) })
+
+/* ---------- 状态 ---------- */
+function render () { if (role === 'console') renderConsole(); else if (role === 'overlay') renderPersist() }
+Stage.onState((k, v) => { if (k !== 'loop') return; S = Object.assign({}, DEFAULT, v || {}); render() })
+Stage.onGM(render)
+pickRole(); fit()
+Stage.ready.then(render)
+</script>
+</body>
+</html>

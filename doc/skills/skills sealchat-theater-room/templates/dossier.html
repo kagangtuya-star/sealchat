@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark"><!-- 跟随宿主 iframe 的配色方案，避免浏览器在 iframe 后垫不透明底色 -->
+<title>资料夹</title>
+<!--
+  SealStage · 资料夹（吊签菜单 + 规则表 / HO 卡 / 文本页）
+  用法：放在舞台一翼（建议 600×1000 左右），开启交互。背景透明。
+  · 规则表可掷骰，结果通过 Embed Events 同步给所有人。
+  · 卡片的 reveal 字段由 GM 点击"公开"后才对所有人显示（Storage 持久化）；sealed: true 的卡片在公开前整张隐藏。
+  · 吊签可用 color 单独配色。
+  · 修改下方 DATA 即可适配任意模组；theme 可选 ink | taisho | cosmic | washi | classic | school。
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'"><!-- 非阻塞加载：字体源不可达时先用系统字体渲染 -->
+<style>
+  :root {
+    --tag: #f3ece0; --tag-ink: #2a2420; --page: #f6f1e7; --page-ink: #2a2420; --line: #2a2420; --accent: #c8322b; --muted: rgba(42,36,32,.55); --rod: #3b2f28;
+    --title-font: "Ma Shan Zheng", "STXingkai", "KaiTi", "STKaiti", serif;
+    --serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+    font-size: clamp(14px, 1.6vmin + 8px, 22px);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font-family: var(--serif); color: var(--page-ink); }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  #app { position: fixed; inset: 0; display: flex; align-items: flex-start; }
+
+  /* ---------- 吊签 ---------- */
+  .rail { position: relative; flex: none; width: 4.4rem; height: 100%; padding-top: 1.6rem; display: flex; flex-direction: column; align-items: center; gap: .55rem; z-index: 2; }
+  .rail::before { content: ""; position: absolute; top: .9rem; left: .3rem; right: .3rem; height: .42rem; border-radius: .3rem; background: var(--rod); box-shadow: 0 .15rem .3rem rgba(0,0,0,.25); }
+  .tag { position: relative; width: 3.1rem; min-height: 6.4rem; padding: 1.5rem 0 .8rem; border: 0; border-radius: .2rem .2rem .35rem .35rem; background: var(--tag); color: var(--tag-ink);
+    writing-mode: vertical-rl; font-family: var(--title-font); font-size: 1.32rem; letter-spacing: .18em; line-height: 1; text-align: center;
+    box-shadow: 0 .25rem .6rem rgba(0,0,0,.22), inset 0 0 0 .14rem color-mix(in srgb, var(--tag-ink) 18%, transparent);
+    transform-origin: 50% -1rem; animation: sway 6s ease-in-out infinite; transition: translate .35s cubic-bezier(.3,1.4,.5,1), background .3s, color .3s; }
+  .tag::before { content: ""; position: absolute; top: .45rem; left: 50%; width: .5rem; height: .5rem; translate: -50% 0; border-radius: 50%; background: var(--rod); box-shadow: inset 0 0 0 .1rem color-mix(in srgb, var(--tag) 60%, transparent); }
+  .tag::after { content: ""; position: absolute; top: -.9rem; left: 50%; width: 1px; height: 1.35rem; background: var(--rod); }
+  .tag:nth-child(2n) { animation-delay: -2s; } .tag:nth-child(3n) { animation-delay: -4s; animation-duration: 7s; }
+  .tag:hover { translate: .25rem 0; }
+  .tag.on { background: var(--line); color: var(--page); translate: .55rem 0; }
+  .tag .dot { position: absolute; right: -.25rem; bottom: -.25rem; width: .7rem; height: .7rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 .15rem var(--tag); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes sway { 0%, 100% { rotate: -1.4deg } 50% { rotate: 1.4deg } }
+  @keyframes pulse { 50% { scale: 1.35 } }
+
+  /* ---------- 页面 ---------- */
+  .page { position: relative; flex: 1; height: calc(100% - 1.2rem); margin: .6rem .6rem .6rem -.2rem; display: flex; flex-direction: column; background: var(--page); color: var(--page-ink); border-radius: .3rem;
+    box-shadow: 0 .6rem 1.6rem rgba(0,0,0,.35), inset 0 0 0 .3rem var(--page), inset 0 0 0 .38rem color-mix(in srgb, var(--line) 55%, transparent), inset 0 0 0 .5rem var(--page), inset 0 0 0 .56rem color-mix(in srgb, var(--line) 30%, transparent);
+    clip-path: inset(0 100% 0 0); opacity: 0; transition: clip-path .55s cubic-bezier(.6,0,.2,1), opacity .2s; overflow: hidden; }
+  .page.open { clip-path: inset(0 0 0 0); opacity: 1; }
+  .page::before { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .5; mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.3 0 0 0 0 0.25 0 0 0 0 0.2 0 0 0 .18 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .head { position: relative; display: flex; align-items: center; gap: .7rem; padding: 1.3rem 1.4rem .8rem; border-bottom: 1px dashed color-mix(in srgb, var(--line) 40%, transparent); }
+  .head h2 { margin: 0; font-family: var(--title-font); font-weight: 400; font-size: 1.9rem; letter-spacing: .12em; }
+  .head .seal { width: 1.7rem; height: 1.7rem; border-radius: .25rem; background: var(--accent); color: var(--page); display: grid; place-items: center; font-family: var(--title-font); font-size: 1.05rem; rotate: -6deg; }
+  .head .sp { flex: 1; }
+  .btn { border: 1px solid color-mix(in srgb, var(--line) 50%, transparent); background: transparent; border-radius: 2rem; padding: .3rem .9rem; font-size: .85rem; letter-spacing: .15em; transition: background .2s, color .2s; }
+  .btn:hover { background: var(--line); color: var(--page); }
+  .btn.accent { border-color: var(--accent); color: var(--accent); }
+  .btn.accent:hover { background: var(--accent); color: var(--page); }
+  .x { border: 0; background: transparent; font-size: 1.4rem; line-height: 1; opacity: .6; padding: .2rem .4rem; }
+  .x:hover { opacity: 1; }
+  .body { position: relative; flex: 1; overflow: auto; padding: 1rem 1.4rem 1.6rem; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--line) 40%, transparent) transparent; }
+  .note { font-size: .78rem; color: var(--muted); margin-top: 1rem; line-height: 1.6; }
+
+  /* 表格 */
+  .rows { display: flex; flex-direction: column; gap: .35rem; }
+  .row { position: relative; display: grid; grid-template-columns: 2.6rem 1fr; gap: .8rem; align-items: start; padding: .55rem .7rem; border-radius: .25rem; transition: background .25s; }
+  .row:nth-child(odd) { background: color-mix(in srgb, var(--line) 5%, transparent); }
+  .row .n { display: grid; place-items: center; width: 2.3rem; height: 2.3rem; border-radius: 50%; border: 1px solid color-mix(in srgb, var(--line) 45%, transparent); font-weight: 700; font-size: 1rem; }
+  .row .t { line-height: 1.65; font-size: .95rem; padding-top: .2rem; }
+  .row .t b { color: var(--accent); }
+  .row .t small { display: block; color: var(--muted); font-size: .8rem; }
+  .row.flash { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .row.hit { background: color-mix(in srgb, var(--accent) 20%, transparent); box-shadow: inset .3rem 0 0 var(--accent); }
+  .row.hit .n { background: var(--accent); color: var(--page); border-color: var(--accent); animation: hit .6s cubic-bezier(.3,1.6,.5,1); }
+  @keyframes hit { from { scale: 1.6 } }
+
+  /* 骰子 */
+  .dice { display: inline-flex; gap: .3rem; }
+  .die { width: 1.9rem; height: 1.9rem; border-radius: .35rem; background: var(--page); border: 1px solid var(--line); display: grid; grid-template: repeat(3, 1fr) / repeat(3, 1fr); padding: .22rem; box-shadow: 0 .1rem .2rem rgba(0,0,0,.2); }
+  .die i { width: .36rem; height: .36rem; border-radius: 50%; background: var(--line); place-self: center; visibility: hidden; }
+  .die.red i { background: var(--accent); }
+  .die.roll { animation: tumble .12s linear infinite; }
+  @keyframes tumble { 50% { rotate: 14deg; translate: 0 -.15rem } }
+
+  /* 卡片 */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: .9rem; }
+  .card { position: relative; perspective: 900px; min-height: 13rem; border: 0; background: none; padding: 0; text-align: left; }
+  .card .in { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform .7s cubic-bezier(.4,.2,.2,1); }
+  .card.flip .in { transform: rotateY(180deg); }
+  .face { position: absolute; inset: 0; backface-visibility: hidden; border-radius: .3rem; padding: .9rem 1rem; overflow: hidden; background: color-mix(in srgb, var(--line) 6%, var(--page)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 40%, transparent), 0 .2rem .5rem rgba(0,0,0,.15); }
+  .face.back { transform: rotateY(180deg); background: color-mix(in srgb, var(--accent) 9%, var(--page)); overflow: auto; }
+  .face .big { position: absolute; right: -.2rem; bottom: -1.2rem; font-family: var(--title-font); font-size: 6.4rem; line-height: 1; color: color-mix(in srgb, var(--line) 10%, transparent); pointer-events: none; }
+  .face .k { display: inline-block; font-size: .72rem; letter-spacing: .25em; padding: .1rem .5rem; border-radius: 2rem; background: var(--accent); color: var(--page); }
+  .face h3 { margin: .5rem 0 .4rem; font-family: var(--title-font); font-weight: 400; font-size: 1.35rem; letter-spacing: .08em; }
+  .face p { margin: 0; font-size: .86rem; line-height: 1.7; white-space: pre-line; }
+  .face .hint { position: absolute; left: 1rem; bottom: .6rem; font-size: .68rem; letter-spacing: .2em; color: var(--muted); }
+  .locked { margin-top: .6rem; padding: .5rem .6rem; border: 1px dashed color-mix(in srgb, var(--line) 45%, transparent); border-radius: .25rem; font-size: .78rem; color: var(--muted); }
+  .gmrow { display: flex; gap: .5rem; margin-top: .5rem; }
+
+  /* 文本页 */
+  .text { font-size: .95rem; line-height: 1.85; }
+  .text h4 { margin: 1.2rem 0 .3rem; font-size: 1rem; color: var(--accent); letter-spacing: .1em; }
+  .text p { margin: .3rem 0; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: .4rem 1rem; }
+  .kv dt { color: var(--accent); letter-spacing: .2em; } .kv dd { margin: 0; }
+
+  /* 掷骰广播提示 */
+  .toast { position: absolute; left: 5rem; right: 1rem; bottom: 1rem; padding: .7rem 1rem; border-radius: .3rem; background: var(--line); color: var(--page); font-size: .9rem; letter-spacing: .05em; box-shadow: 0 .4rem 1rem rgba(0,0,0,.3); translate: 0 140%; transition: translate .4s cubic-bezier(.3,1.3,.5,1); z-index: 5; }
+  .toast.show { translate: 0 0; }
+  .toast b { color: color-mix(in srgb, var(--accent) 60%, white); }
+  .warn { position: absolute; left: 5rem; top: .4rem; font-size: .7rem; color: var(--accent); }
+  @media (prefers-reduced-motion: reduce) { .tag, .tag .dot { animation: none; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <nav class="rail" id="rail"></nav>
+  <section class="page" id="page">
+    <div class="head"><span class="seal" id="pseal"></span><h2 id="ptitle"></h2><span class="sp"></span><span id="ptools"></span><button class="x" id="close" title="收起">×</button></div>
+    <div class="body" id="pbody"></div>
+  </section>
+  <div class="toast" id="toast"></div>
+  <div class="warn" id="warn"></div>
+</div>
+<script>
+const STAGE_NS = 'dossier'
+const DATA = {
+  theme: 'washi',
+  seal: '忍',
+  tabs: [
+    { id: 'emotion', label: '感情表', type: 'table', dice: '1D6', rows: [
+      [1, '<b>共感</b>（正）／<b>不信</b>（负）'], [2, '<b>友情</b>（正）／<b>愤怒</b>（负）'], [3, '<b>爱情</b>（正）／<b>嫉妒</b>（负）'],
+      [4, '<b>忠诚</b>（正）／<b>侮蔑</b>（负）'], [5, '<b>憧憬</b>（正）／<b>自卑</b>（负）'], [6, '<b>狂信</b>（正）／<b>杀意</b>（负）'] ],
+      note: '感情判定成功时，双方各自从掷出的一组中选择正面或负面感情。' },
+    { id: 'status', label: '变调表', type: 'table', dice: '1D6', rows: [
+      [1, '<b>故障</b>　所持忍具全部无法使用。<small>每巡结束时《机关术》判定成功则恢复</small>'],
+      [2, '<b>麻痹</b>　随机选择一个已修得特技，视为无法使用。<small>每巡结束时《身体操术》判定成功则恢复</small>'],
+      [3, '<b>重伤</b>　每次进行命中、情报、感情判定时，受到 1 点接近战伤害。<small>每巡结束时《生存术》判定成功则恢复</small>'],
+      [4, '<b>行踪不明</b>　主要阶段中，无法登场于自己以外角色为场景玩家的场景。<small>每巡结束时《经济力》判定成功则恢复</small>'],
+      [5, '<b>忘却</b>　随机选择一个已获得的【感情】，视为未获得。<small>每巡结束时《记忆术》判定成功则恢复</small>'],
+      [6, '<b>诅咒</b>　随机选择一个已修得忍法，视为未修得。<small>每巡结束时《咒术》判定成功则恢复</small>'] ],
+      note: '恢复所用特技请以所用规则书版本为准。' },
+    { id: 'fumble', label: '大失败表', type: 'table', dice: '1D6', rows: [
+      [1, '状态不太对劲。本巡内所有行为判定 -1。'], [2, '糟了！失去一个任选的忍具。'],
+      [3, '情报泄露！除你以外的所有角色，可以从你的【秘密】或【居所】中任选一项获知。'],
+      [4, '大意了！术的控制失败，失去任选 1 点【生命力】。'], [5, '敌人的阴谋？中了陷阱，随机受到一种变调。'], [6, '呼——好险。什么也没有发生。'] ] },
+    { id: 'ho', label: '导入', type: 'cards', cards: [
+      { tag: 'PC①', big: '壹', title: '示例 HO', body: '你的【使命】是……', back: '推荐流派：任意\n与 PC② 有既定关系。' },
+      { tag: 'PC②', big: '贰', title: '示例 HO', body: '你的【使命】是……', back: '推荐流派：任意' },
+      { tag: '谜团', big: '谜', title: '示例谜团', body: '某处隐藏着的秘密。', reveal: '战力：示例\n解除条件：计划判定《意气》' } ] },
+    { id: 'info', label: '概要', type: 'text', html: '<dl class="kv"><dt>类型</dt><dd>对立型</dd><dt>规制</dt><dd>现代篇</dd><dt>人数</dt><dd>四人</dd><dt>时限</dt><dd>三巡</dd></dl><h4>备注</h4><p>在 DATA 中修改这里的内容。</p>' }
+  ]
+}
+const THEMES = {
+  ink:     { tag: '#f2ede2', 'tag-ink': '#141414', page: '#f4efe4', 'page-ink': '#1b1b1b', line: '#1b1b1b', accent: '#3c64b4', muted: 'rgba(27,27,27,.55)', rod: '#141414' },
+  taisho:  { tag: '#c23a2c', 'tag-ink': '#f3e6cc', page: '#f0e3c9', 'page-ink': '#2a1a15', line: '#2a1a15', accent: '#b02e22', muted: 'rgba(42,26,21,.6)', rod: '#2a1a15' },
+  cosmic:  { tag: '#0e1428', 'tag-ink': '#e8eefc', page: '#0c1122', 'page-ink': '#e6ecfa', line: '#c9d4ec', accent: '#6c8bff', muted: 'rgba(230,236,250,.55)', rod: '#c9d4ec' },
+  washi:   { tag: '#f1e3df', 'tag-ink': '#7a453c', page: '#f4e9e6', 'page-ink': '#5e352e', line: '#8b5247', accent: '#b34a3c', muted: 'rgba(94,53,46,.6)', rod: '#8b5247' },
+  classic: { tag: '#d8433b', 'tag-ink': '#f5e7c4', page: '#efe3c6', 'page-ink': '#2a2016', line: '#3a2c1d', accent: '#c2362e', muted: 'rgba(42,32,22,.6)', rod: '#bfa77a' },
+  school:  { tag: '#fff7ec', 'tag-ink': '#2c2238', page: '#fffaf2', 'page-ink': '#2c2238', line: '#3a2e48', accent: '#e0493f', muted: 'rgba(44,34,56,.6)', rod: '#3a2e48' }
+}
+
+/* <sealstage-runtime v1>
+ * SealStage —— 小剧场网页组件的统一运行时（粘贴进每个需要同步的组件）。
+ * · 在 SealChat iForm 内：通过 Channel Embed SDK 使用 Storage（持久状态）与 Events（瞬时特效）。
+ * · 独立预览时：回落到 BroadcastChannel + localStorage，本机多个标签/iframe 之间同步。
+ * · Storage / Events 的作用域是 (频道, iForm)：同一个 iForm 被多次放上舞台时共享状态。
+ * API：
+ *   Stage.ready            Promise，完成连接或回落后 resolve
+ *   Stage.mode             'sealchat' | 'local' | 'unsynced'
+ *   Stage.gm               当前用户是否为 World Owner/Admin（本地预览恒为 true，?gm=0 可模拟玩家）
+ *   Stage.get(key)         读取已同步的状态
+ *   Stage.set(key, value)  写入并广播（乐观更新）
+ *   Stage.onState(fn)      fn(key, value)，任何状态变化（含首次拉取）
+ *   Stage.emit(topic, p)   广播瞬时事件（本地立即触发一次，远端回声自动去重）
+ *   Stage.on(topic, fn)    订阅瞬时事件
+ *   Stage.onGM(fn)         GM 身份变化
+ */
+const Stage = (() => {
+  const NS = (typeof STAGE_NS === 'string' && STAGE_NS) || 'sealstage'
+  const cfg = window.__SEALCHAT_EMBED_CONFIG__ || {}
+  const q = new URLSearchParams(location.search)
+  const hostOrigin = q.get('hostOrigin') || cfg.hostOrigin || ''
+  const sdkUrl = q.get('sdkUrl') || cfg.sdkUrl || ''
+  const framed = window.parent !== window
+  const state = {}, stateFns = new Set(), gmFns = new Set(), evtFns = {}, seen = new Set(), topics = new Set()
+  let client = null, retry = 1000
+  const api = { mode: 'local', gm: q.get('gm') !== '0', ready: null }
+
+  const fireState = (k, v) => { if (v === undefined) delete state[k]; else state[k] = v; stateFns.forEach(fn => { try { fn(k, v) } catch (e) { console.error(e) } }) }
+  const fireEvt = (topic, p) => {
+    if (p && p._id) { if (seen.has(p._id)) return; seen.add(p._id); if (seen.size > 500) seen.delete(seen.values().next().value) }
+    (evtFns[topic] || []).forEach(fn => { try { fn(p || {}) } catch (e) { console.error(e) } })
+  }
+  const setGM = v => { if (api.gm === v) return; api.gm = v; gmFns.forEach(fn => fn(v)) }
+
+  /* ---------- 本地回落：BroadcastChannel + localStorage（均可能被沙箱禁止，全部 try） ---------- */
+  let bc = null
+  const lsKey = k => `${NS}:${k}`
+  const lsRead = () => { try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(NS + ':')) state[k.slice(NS.length + 1)] = JSON.parse(localStorage.getItem(k)) } } catch {} }
+  const lsWrite = (k, v) => { try { v === undefined ? localStorage.removeItem(lsKey(k)) : localStorage.setItem(lsKey(k), JSON.stringify(v)) } catch {} }
+  const local = () => {
+    try { bc = new BroadcastChannel(NS); bc.onmessage = e => { const m = e.data || {}; if (api.mode === 'sealchat') return; if (m.t === 's') fireState(m.k, m.v); else if (m.t === 'e') fireEvt(m.topic, m.p) } } catch {}
+    lsRead(); Object.keys(state).forEach(k => fireState(k, state[k]))
+  }
+  const bcPost = m => { try { bc && bc.postMessage(m) } catch {} }
+
+  /* ---------- SealChat Embed ---------- */
+  const loadSdk = () => window.SealChatEmbed ? Promise.resolve() : new Promise((res, rej) => {
+    const s = document.createElement('script'); s.src = sdkUrl; s.async = true
+    s.onload = () => window.SealChatEmbed ? res() : rej(new Error('SDK missing')); s.onerror = () => rej(new Error('SDK load failed'))
+    document.head.appendChild(s)
+  })
+  const pullAll = async () => {
+    const snap = await client.storage.snapshot()
+    const docs = (snap && (snap.documents || snap.items)) || []
+    docs.forEach(d => fireState(d.key, d.value))
+  }
+  const connect = async () => {
+    await loadSdk()
+    const c = await window.SealChatEmbed.connect({ targetOrigin: hostOrigin || undefined, timeoutMs: 10000 })
+    client = c; api.mode = 'sealchat'; retry = 1000
+    c.session.onClosed(() => { if (client !== c) return; client = null; setTimeout(() => connect().catch(reconnect), retry) })
+    c.storage.onChanged(async ch => {
+      if (!ch) return
+      if (ch.kind === 'resynced') return pullAll().catch(() => {})
+      if (!ch.key) return
+      if (ch.kind === 'delete' || ch.op === 'delete') return fireState(ch.key, undefined)
+      if ('value' in ch && ch.value !== undefined) return fireState(ch.key, ch.value)
+      const doc = await c.storage.get(ch.key).catch(() => null); fireState(ch.key, doc ? doc.value : undefined)
+    })
+    topics.forEach(t => c.events.on(t, p => fireEvt(t, p)))
+    const applyPerm = p => setGM(!!(p && (p.canManageWorld || p.isWorldAdmin || p.isWorldOwner)))
+    try { c.permissions.onChanged(applyPerm); applyPerm(await c.permissions.getCurrent()) } catch { setGM(false) }
+    await pullAll().catch(() => {})
+  }
+  const reconnect = err => {
+    const code = err && err.code
+    if (code && !['HANDSHAKE_FAILED', 'SESSION_EXPIRED', 'CONTEXT_CHANGED', 'TIMEOUT', 'WS_OFFLINE', 'INTERNAL_ERROR'].includes(code)) { console.warn('[SealStage]', code, err.message); return }
+    setTimeout(() => connect().catch(reconnect), retry); retry = Math.min(retry * 2, 30000)
+  }
+
+  api.ready = (async () => {
+    if (framed && hostOrigin && sdkUrl) {
+      api.gm = false
+      try { await connect() } catch (e) { reconnect(e) }
+    } else {
+      // 本地预览页与组件同源，可访问 parent；SealChat 里未启用 Embed API 或裸外链时访问会抛错
+      let parentSame = false
+      try { parentSame = !!window.parent.location.href } catch {}
+      if (framed && !parentSame) { api.mode = 'unsynced'; api.gm = false }
+      local()
+    }
+  })()
+
+  api.get = k => state[k]
+  api.set = async (k, v) => {
+    fireState(k, v)
+    if (client) { try { await client.storage.set(k, v) } catch (e) { console.warn('[SealStage] storage.set', e && e.code, e && e.message) } }
+    else { lsWrite(k, v); bcPost({ t: 's', k, v }) }
+  }
+  // 新订阅者立即收到当前全部状态（本地模式的初始状态在组件注册前就已读出）
+  api.onState = fn => { stateFns.add(fn); Object.keys(state).forEach(k => fn(k, state[k])); return () => stateFns.delete(fn) }
+  api.onGM = fn => { gmFns.add(fn); return () => gmFns.delete(fn) }
+  api.on = (topic, fn) => {
+    (evtFns[topic] = evtFns[topic] || []).push(fn)
+    if (!topics.has(topic)) { topics.add(topic); if (client) client.events.on(topic, p => fireEvt(topic, p)) }
+  }
+  api.emit = async (topic, payload) => {
+    const p = Object.assign({}, payload, { _id: Math.random().toString(36).slice(2) + Date.now().toString(36), _at: Date.now() })
+    fireEvt(topic, p)
+    if (client) { try { await client.events.publish(topic, p) } catch (e) { console.warn('[SealStage] events.publish', e && e.code) } }
+    else bcPost({ t: 'e', topic, p })
+  }
+  return api
+})()
+/* </sealstage-runtime> */
+
+const qs = new URLSearchParams(location.search)
+const theme = THEMES[qs.get('theme') || DATA.theme] || THEMES.washi
+for (const [k, v] of Object.entries(theme)) document.documentElement.style.setProperty('--' + k, v)
+const $ = id => document.getElementById(id)
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+const PIPS = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] }
+let current = null, revealed = {}, unseen = new Set()
+
+function rail () {
+  $('rail').innerHTML = DATA.tabs.map(t => `<button class="tag${current === t.id ? ' on' : ''}" data-id="${t.id}"${t.color && current !== t.id ? ` style="background:${t.color}"` : ''}>${esc(t.label)}${unseen.has(t.id) ? '<span class="dot"></span>' : ''}</button>`).join('')
+}
+function dieHTML (v, red) { return `<span class="die${red ? ' red' : ''}">${Array.from({ length: 9 }, (_, i) => `<i style="visibility:${PIPS[v].includes(i) ? 'visible' : 'hidden'}"></i>`).join('')}</span>` }
+
+function open (id) {
+  const t = DATA.tabs.find(x => x.id === id)
+  if (!t || current === id) { close(); return }
+  current = id; unseen.delete(id); rail()
+  $('ptitle').textContent = t.label; $('pseal').textContent = DATA.seal || ''
+  $('ptools').innerHTML = t.type === 'table' ? `<span class="dice" id="dice">${dieHTML(1)}${t.dice === '2D6' ? dieHTML(1, true) : ''}</span> <button class="btn accent" id="roll">掷 ${t.dice}</button>` : ''
+  render(t)
+  const p = $('page'); p.classList.remove('open'); void p.offsetWidth; p.classList.add('open')
+  if ($('roll')) $('roll').onclick = () => roll(t)
+}
+function close () { current = null; $('page').classList.remove('open'); rail() }
+
+function render (t) {
+  const b = $('pbody')
+  if (t.type === 'table') {
+    b.innerHTML = `<div class="rows">${t.rows.map(([n, txt]) => `<div class="row" data-n="${n}"><span class="n">${n}</span><span class="t">${txt}</span></div>`).join('')}</div>${t.note ? `<p class="note">※ ${t.note}</p>` : ''}`
+  } else if (t.type === 'cards') {
+    b.innerHTML = `<div class="cards">${t.cards.map((c, i) => {
+      const key = `${t.id}:${i}`, open = revealed[key], sealed = c.sealed && !open
+      const lock = c.reveal ? (open ? `<p style="margin-top:.6rem">${esc(c.reveal)}</p>` : sealed ? '' : `<div class="locked">🔒 尚未公开</div>`) : ''
+      const gm = (c.reveal || c.sealed) && Stage.gm ? `<div class="gmrow"><span class="btn accent" data-reveal="${key}">${open ? 'GM · 收回' : 'GM · 公开'}</span></div>` : ''
+      return `<div class="card" data-i="${i}" role="button" tabindex="0"><div class="in">
+        <div class="face"><span class="big">${esc(c.big || '')}</span><span class="k">${esc(c.tag)}</span><h3>${esc(sealed ? '？？？' : c.title)}</h3><p>${esc(sealed ? (c.sealedText || '尚未公开') : c.body)}</p>${lock}${gm}${c.back && !sealed ? '<span class="hint">点击翻面 ↻</span>' : ''}</div>
+        <div class="face back"><span class="k">${esc(c.tag)}</span><h3>${esc(c.title)}</h3><p>${esc(c.back || '')}</p></div>
+      </div></div>`
+    }).join('')}</div>`
+    b.querySelectorAll('.card').forEach(el => el.onclick = e => {
+      const r = e.target.closest('[data-reveal]')
+      if (r) { e.stopPropagation(); const k = r.dataset.reveal; Stage.set('revealed', Object.assign({}, revealed, { [k]: !revealed[k] })); return }
+      const c = t.cards[el.dataset.i]; if (c.back && !(c.sealed && !revealed[`${t.id}:${el.dataset.i}`])) el.classList.toggle('flip')
+    })
+  } else b.innerHTML = `<div class="text">${t.html}</div>`
+  b.scrollTop = 0
+}
+
+/* 掷骰：本地动画 → 广播结果。远端收到同一结果，播放同样的落点 */
+function roll (t) {
+  const n = t.dice === '2D6' ? 2 : 1
+  const vals = Array.from({ length: n }, () => 1 + (Math.random() * 6 | 0))
+  Stage.emit('dossier.roll', { tab: t.id, vals })
+}
+function playRoll (tabId, vals, remote) {
+  const t = DATA.tabs.find(x => x.id === tabId); if (!t) return
+  const sum = vals.reduce((a, b) => a + b, 0), row = t.rows.find(r => r[0] === sum)
+  if (remote && current !== tabId) { unseen.add(tabId); rail() }
+  toast(`${t.label} · ${t.dice} → <b>${sum}</b>　${row ? row[1].replace(/<small>.*<\/small>/, '').replace(/<[^>]+>/g, '') : ''}`)
+  if (current !== tabId) return
+  const dice = $('dice'), rows = [...$('pbody').querySelectorAll('.row')]
+  rows.forEach(r => r.classList.remove('hit', 'flash'))
+  dice.querySelectorAll('.die').forEach(d => d.classList.add('roll'))
+  let k = 0
+  const spin = setInterval(() => {
+    dice.innerHTML = vals.map((_, i) => dieHTML(1 + (Math.random() * 6 | 0), i === 1)).join('')
+    dice.querySelectorAll('.die').forEach(d => d.classList.add('roll'))
+    rows.forEach((r, i) => r.classList.toggle('flash', i === k % rows.length)); k++
+  }, 70)
+  setTimeout(() => {
+    clearInterval(spin)
+    dice.innerHTML = vals.map((v, i) => dieHTML(v, i === 1)).join('')
+    rows.forEach(r => r.classList.remove('flash'))
+    const hit = rows.find(r => Number(r.dataset.n) === sum)
+    if (hit) { hit.classList.add('hit'); hit.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }
+  }, 900)
+}
+let toastTimer = 0
+function toast (html) { const el = $('toast'); el.innerHTML = html; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 5200) }
+
+$('rail').onclick = e => { const b = e.target.closest('.tag'); if (b) open(b.dataset.id) }
+$('close').onclick = close
+Stage.on('dossier.roll', p => playRoll(p.tab, p.vals || [1], true))
+Stage.onState((k, v) => { if (k === 'revealed') { revealed = v || {}; const t = DATA.tabs.find(x => x.id === current); if (t && t.type === 'cards') render(t) } })
+Stage.onGM(() => { const t = DATA.tabs.find(x => x.id === current); if (t) render(t) })
+Stage.ready.then(() => { if (Stage.mode === 'unsynced') $('warn').textContent = '未启用 Embed API：掷骰与公开不会同步' })
+rail()
+</script>
+</body>
+</html>

@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>乐园 · 孔版会志 · 目次</title>
+<!--
+  《乐园》孔版会志房间 · 资料夹「目次」（右翼，建议 460×470 @ (1445,130)，开启交互；需要启用 Embed API）
+  · 平时是会志的目次页；点条目翻到对应页，左上「← 目次」返回。
+  · 规则表可掷骰，结果通过 Events 同步给所有人（远端掷骰时目次条目上会出现粉点）。
+  · 导入 HO / 社员是"部员证"，点击翻面；谜团是"密封页"，GM 点「GM · 剪开」后对所有人公开（Storage 持久化）。
+  · 修改 DATA 即可增删页。
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=ZCOOL+QingKe+HuangYou&family=Noto+Sans+SC:wght@400;700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<style>
+  :root {
+    --paper: #f3eee2; --blue: #0078bf; --pink: #ff48b0; --ink: #1f2b5c;
+    --disp: "ZCOOL QingKe HuangYou", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: "Space Mono", ui-monospace, Menlo, Consolas, monospace;
+    --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 .3 0 0 0 0 .26 0 0 0 0 .2 0 0 0 .2 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+    font-size: clamp(11px, 3.2vmin, 20px);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font-family: var(--sans); color: var(--ink); }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .sheet { position: fixed; inset: .4rem; display: flex; flex-direction: column; background: var(--paper) var(--grain); box-shadow: 0 .3rem 1rem rgba(20,26,61,.28); border-top: .2rem solid var(--blue); }
+  .sheet::after { content: ""; position: absolute; left: 0; right: 0; top: .2rem; border-top: 1px solid var(--blue); pointer-events: none; }
+
+  /* ---------- 目次 ---------- */
+  #toc { padding: .8rem 1.1rem 1rem; }
+  #toc .cap { display: flex; align-items: baseline; gap: .6rem; margin: .1rem 0 .5rem; color: var(--blue); }
+  #toc .cap b { font: 900 1.25rem var(--sans); letter-spacing: .3em; } #toc .cap small { font: .66rem var(--mono); letter-spacing: .35em; opacity: .7; }
+  #toc .cap .sp { flex: 1; } #toc .cap i { font: .66rem var(--mono); font-style: normal; color: var(--pink); }
+  .list { flex: 1; overflow: auto; scrollbar-width: thin; }
+  .ent { position: relative; display: grid; grid-template-columns: 2.1rem 1fr auto; align-items: baseline; gap: .5rem; width: 100%; padding: .34rem .2rem; border: 0; background: none; text-align: left; color: var(--blue); }
+  .ent .no { font: 700 1rem var(--mono); color: var(--pink); }
+  .ent .nm { position: relative; font-weight: 700; font-size: 1rem; letter-spacing: .12em; display: flex; align-items: baseline; gap: .5rem; }
+  .ent .nm::after { content: ""; flex: 1; border-bottom: 2px dotted currentColor; opacity: .35; translate: 0 -.25rem; }
+  .ent .pg { font: .8rem var(--mono); opacity: .7; }
+  .ent::before { content: ""; position: absolute; left: 2.2rem; right: 2.6rem; top: 45%; height: 50%; background: var(--pink); opacity: .35; transform: scaleX(0); transform-origin: 0 50%; transition: transform .25s; }
+  .ent:hover::before { transform: scaleX(1); }
+  .ent .dot { position: absolute; left: 1.55rem; top: .45rem; width: .5rem; height: .5rem; border-radius: 50%; background: var(--pink); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { scale: 1.5 } }
+
+  /* ---------- 内页 ---------- */
+  #page { display: none; }
+  body.open #toc { display: none; } body.open #page { display: flex; }
+  .head { display: flex; align-items: center; gap: .6rem; padding: .7rem 1rem .5rem; border-bottom: 1px dashed color-mix(in srgb, var(--blue) 45%, transparent); color: var(--blue); }
+  .back { border: 0; background: none; font: 700 .8rem var(--mono); letter-spacing: .1em; color: var(--blue); padding: .2rem .3rem; }
+  .back:hover { color: var(--pink); }
+  .head h2 { margin: 0; font: 400 1.45rem var(--disp); letter-spacing: .12em; position: relative; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: .1em; }
+  .head h2 span { position: absolute; left: .08em; top: .06em; color: var(--pink); mix-blend-mode: multiply; white-space: nowrap; }
+  .head .sp { flex: 1; }
+  .btn { border: 1.5px solid var(--blue); background: var(--paper); color: var(--blue); padding: .2rem .7rem; font-size: .78rem; font-weight: 700; letter-spacing: .12em; box-shadow: 0 .15rem 0 var(--blue); }
+  .btn:active { translate: 0 .15rem; box-shadow: none; }
+  .btn.pk { border-color: var(--pink); color: var(--pink); box-shadow: 0 .15rem 0 var(--pink); }
+  .body { flex: 1; overflow: auto; padding: .7rem 1rem 1.2rem; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--blue) 40%, transparent) transparent; }
+  .note { font-size: .72rem; opacity: .7; margin-top: .8rem; line-height: 1.6; }
+
+  /* 表格 */
+  .rows { display: flex; flex-direction: column; }
+  .row { position: relative; display: grid; grid-template-columns: 2rem 1fr; gap: .6rem; align-items: start; padding: .42rem .3rem; border-bottom: 1px dotted color-mix(in srgb, var(--blue) 35%, transparent); }
+  .row .n { display: grid; place-items: center; width: 1.8rem; height: 1.8rem; border: 1.5px solid var(--blue); border-radius: 50%; font: 700 .85rem var(--mono); color: var(--blue); }
+  .row .t { font-size: .86rem; line-height: 1.65; }
+  .row .t b { color: var(--blue); } .row .t small { display: block; opacity: .65; font-size: .74rem; }
+  .row.flash { background: color-mix(in srgb, var(--pink) 14%, transparent); }
+  .row.hit::before { content: ""; position: absolute; inset: .15rem 0; background: var(--pink); opacity: .28; z-index: 0; transform-origin: 0 50%; animation: swipe .35s ease-out both; }
+  .row.hit .n { background: var(--pink); border-color: var(--pink); color: #fff; animation: hit .5s cubic-bezier(.3,1.6,.5,1); }
+  .row > * { position: relative; z-index: 1; }
+  @keyframes swipe { from { transform: scaleX(0) } } @keyframes hit { from { scale: 1.7 } }
+  .dice { display: inline-flex; gap: .25rem; }
+  .die { width: 1.5rem; height: 1.5rem; border: 1.5px solid var(--blue); background: var(--paper); display: grid; place-items: center; font: 700 .85rem var(--mono); color: var(--blue); }
+  .die.p { border-color: var(--pink); color: var(--pink); }
+  .die.roll { animation: tumble .12s linear infinite; } @keyframes tumble { 50% { rotate: 14deg; translate: 0 -.12rem } }
+
+  /* 部员证 */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: .7rem; }
+  .card { position: relative; perspective: 900px; min-height: 11.5rem; border: 0; background: none; padding: 0; text-align: left; }
+  .card .in { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform .7s cubic-bezier(.4,.2,.2,1); }
+  .card.flip .in { transform: rotateY(180deg); }
+  .face { position: absolute; inset: 0; backface-visibility: hidden; padding: .7rem .8rem; overflow: hidden; background: #fbf8f0 var(--grain); border: 1.5px solid var(--blue); box-shadow: .22rem .22rem 0 color-mix(in srgb, var(--pink) 70%, transparent); }
+  .face.back { transform: rotateY(180deg); background-color: #fdeef6; overflow: auto; }
+  .face .big { position: absolute; right: -.1rem; bottom: -1rem; font: 400 5.4rem var(--disp); line-height: 1; color: var(--pink); opacity: .22; pointer-events: none; }
+  .face .k { display: inline-block; font: 700 .64rem var(--mono); letter-spacing: .2em; padding: .05rem .45rem; background: var(--blue); color: var(--paper); }
+  .face h3 { margin: .45rem 0 .3rem; font: 900 1.02rem var(--sans); letter-spacing: .06em; color: var(--blue); }
+  .face p { margin: 0; font-size: .78rem; line-height: 1.65; white-space: pre-line; }
+  .face .hint { position: absolute; left: .8rem; bottom: .45rem; font: .6rem var(--mono); letter-spacing: .15em; opacity: .6; }
+  .face .rv { margin-top: .5rem; padding-top: .4rem; border-top: 1px dashed var(--pink); }
+  .gmrow { margin-top: .5rem; }
+  /* 密封页 */
+  .face.seal { background: color-mix(in srgb, var(--pink) 85%, white) var(--grain); border-color: var(--pink); color: #fff; box-shadow: .22rem .22rem 0 color-mix(in srgb, var(--blue) 60%, transparent); display: flex; flex-direction: column; justify-content: center; text-align: center; }
+  .face.seal::after { content: "✂"; position: absolute; right: .25rem; top: .2rem; font-size: .9rem; }
+  .face.seal::before { content: ""; position: absolute; top: 0; bottom: 0; right: .55rem; border-right: 2px dashed rgba(255,255,255,.85); }
+  .face.seal h3 { color: #fff; font: 400 1.8rem var(--disp); } .face.seal .k { background: #fff; color: var(--pink); align-self: center; }
+  .face.seal .btn { background: #fff; }
+  .face.cut { border-right-style: dashed; }
+
+  /* 文本页 */
+  .text { font-size: .86rem; line-height: 1.8; }
+  .text h4 { margin: .9rem 0 .2rem; font-size: .9rem; color: var(--blue); letter-spacing: .1em; display: inline-block; background: linear-gradient(transparent 55%, color-mix(in srgb, var(--pink) 40%, transparent) 55%); }
+  .text p { margin: .25rem 0; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: .25rem .9rem; margin: 0; }
+  .kv dt { color: var(--pink); font-weight: 700; letter-spacing: .15em; } .kv dd { margin: 0; }
+
+  .toast { position: fixed; left: .9rem; right: .9rem; bottom: .9rem; padding: .55rem .8rem; background: var(--blue); color: var(--paper); font-size: .8rem; box-shadow: .25rem .25rem 0 var(--pink); translate: 0 160%; transition: translate .4s cubic-bezier(.3,1.3,.5,1); z-index: 5; }
+  .toast.show { translate: 0 0; } .toast b { color: #ffd2ea; }
+  .warn { position: fixed; right: .8rem; top: .55rem; font: .6rem var(--mono); color: var(--pink); }
+  @media (prefers-reduced-motion: reduce) { .ent .dot { animation: none; } .card .in { transition: none; } }
+</style>
+</head>
+<body>
+<section class="sheet" id="toc">
+  <div class="cap"><small>INDEX · 点条目翻到那一页</small><span class="sp"></span><i>No.30</i></div>
+  <div class="list" id="list"></div>
+</section>
+<section class="sheet" id="page">
+  <div class="head"><button class="back" id="back">← 目次</button><h2 id="ptitle"></h2><span class="sp"></span><span id="ptools"></span></div>
+  <div class="body" id="pbody"></div>
+</section>
+<div class="toast" id="toast"></div>
+<div class="warn" id="warn"></div>
+<script>
+const STAGE_NS = 'paradise-riso-dossier'
+const DATA = {
+  tabs: [
+    { id: 'info', label: '概要', type: 'text', html: `
+      <dl class="kv"><dt>模组</dt><dd>乐园</dd><dt>类型</dt><dd>特殊型</dd><dt>规制</dt><dd>现代篇</dd><dt>人数</dt><dd>四人</dd><dt>时限</dt><dd>四巡</dd><dt>秘宝</dt><dd>文化祭的回忆</dd><dt>特殊规则</dt><dd>人格面具 · 谜团</dd></dl>
+      <h4>舞台</h4><p>私立清陵学园，文化祭的前一天——<b>九月三十日</b>。每一巡视为一天。</p>
+      <p>PC 们是同一个同好会的成员。今天没有课，大家直接来到了社团教室。</p>
+      <h4>场景表</h4><p>剧情场景使用基本规则书的「学校场景表」。本目次另附一张原创的「文化祭前日 · 氛围表」供补充描写。</p>
+      <h4>署名</h4><p>原作：河岛陶一朗（刊于 Role&amp;Roll Vol.70 / 《忍秘传·改》）<br>译者：透<br>喜欢请支持原作者。</p>` },
+    { id: 'ho', label: '导入 HO', type: 'cards', cards: [
+      { tag: 'PC①', big: '1', title: '让文化祭顺利结束', body: '你是就读于清陵学园的普通学生。\n你的【使命】是让文化祭顺利结束。', back: '水波薰与 PC① 为异性，\n诸星真琴与 PC① 为同性。' },
+      { tag: 'PC②', big: '2', title: '守护伙伴', body: '你是就读于清陵学园的普通学生。\n你的【使命】是守护对自己来说无可替代的伙伴。' },
+      { tag: 'PC③', big: '3', title: '让文化祭成功举办', body: '你是就读于清陵学园的普通学生。\n你的【使命】是让文化祭成功举办。' },
+      { tag: 'PC④', big: '4', title: '调查心上人', body: '你是就读于清陵学园的普通学生。\n你的【使命】是调查同好会成员喜欢的人究竟是谁。' } ] },
+    { id: 'npc', label: '社员', type: 'cards', cards: [
+      { tag: 'NPC', big: '薰', title: '水波薰', body: '清陵学园二年级。很有活力、性格开朗。\n「虽然也很期待文化祭，但光是做准备就已经超级开心了！」\n「大家一起做些什么好开心啊！」', back: '使命：和大家一起度过快乐的时光。' },
+      { tag: 'NPC', big: '琴', title: '诸星真琴', body: '清陵学园二年级。说话总是无精打采。\n「好想赶快回家……」\n「这种气氛我不太擅长……」', back: '使命：赶快回家。' } ] },
+    { id: 'persona', label: '人格面具 · 秘宝', type: 'text', html: `
+      <h4>人格面具 · 伪装</h4><p>你根本没有喜欢的人。</p>
+      <h4>人格面具 · 真实【告白】</h4><p>修得该【真实】时，选择一名自身以外的角色为目标，再任选一种【感情】。该【真实】公开后，持有者可以对目标获得记入的该【感情】；若已持有其他种类的【感情】，则变更为该感情。</p>
+      <p>游戏结束时，如果自己和目标对彼此持有相同的【感情】，该【真实】的持有者获得 <b>2</b> 点功绩点。</p>
+      <h4>导入时</h4><p>本次社团活动中的所有人都有着自己思慕的人。请在【告白】中写入自己心仪的对象为目标，感情务必指定为<b>「爱情」</b>。</p>
+      <h4>秘宝 · 文化祭的回忆</h4><p>由文化祭留下的无可替代的回忆，由<b>最先满足【告白】条件</b>的角色获得。团务开始时公开，最初没有持有者。</p>
+      <p>这个秘宝的【秘密】无法通过情报判定或情报共有获得；获得者可以查看，并可在剧情场景中让渡。</p>
+      <p class="note">※ 若在时限结束前无人获得该秘宝……</p>` },
+    { id: 'mystery', label: '谜团 · 密封页', type: 'cards', cards: [
+      { tag: '谜团', big: '谜', title: '清陵学园', sealed: true, sealedText: '沿虚线剪开之前，请勿偷看。', body: '县里首屈一指的升学学校。平时忙于学习的学生们，只有在文化祭之前的这段时间才会放肆起来。', reveal: '战力【明镜止水】\n解除条件：计划判定《意气》\n效果：战斗中，BOSS 大失败时可以使用。将 BOSS 大失败导致的逆凪无效化。' },
+      { tag: '谜团', big: '谜', title: '文化祭的小道具', sealed: true, sealedText: '沿虚线剪开之前，请勿偷看。', body: 'PC 们的同好会公开发表的东西。其中隐藏的是……？', reveal: '战力【黑之斗气】\n解除条件：计划判定《死灵术》\n效果：有人以 BOSS 为目标进行了攻击，攻击处理之后可以使用。选择进行了攻击的角色为目标，目标进行《意气》判定；失败则给予目标 1 点集团战伤害。' } ] },
+    { id: 'scene', label: '文化祭前日 · 氛围表', type: 'table', dice: '2D6', rows: [
+      [2, '<b>天台</b>　夕阳把整座城市染成橘色，铁丝网在风里嗡嗡作响。不知为何，你觉得这片晚霞已经看过很多次了。'],
+      [3, '<b>印刷室</b>　孔版印刷机还是温的。出纸托盘里，躺着一叠刚印好的传单，油墨的气味还没散。'],
+      [4, '<b>走廊</b>　纸花与彩带堆满墙边，有人踩着梯子挂起万国旗。'],
+      [5, '<b>体育馆后台</b>　幕布后堆着道具箱，灯光测试的光柱一明一灭。'],
+      [6, '<b>社团教室</b>　你们的据点。桌上散落着剪刀、胶带、订书机，和写满待办事项的便条。'],
+      [7, '<b>教室</b>　桌椅被推到墙边，黑板上写着"距文化祭还有 1 天！"'],
+      [8, '<b>校门口</b>　施工中的拱门搭着脚手架，木板上还没干的油漆闪着光。'],
+      [9, '<b>图书室</b>　管理员不在。窗边的座位上，落着一本没还的轻小说。'],
+      [10, '<b>中庭</b>　摊位帐篷搭到一半，模拟店的招牌被风吹得哗啦作响。'],
+      [11, '<b>保健室</b>　白色窗帘随风鼓起。病床上的被子叠得整整齐齐，像是从来没人睡过。'],
+      [12, '<b>校对台</b>　摊开的校样上，红笔圈出了一个错字。你确定昨天已经改过它了。'] ],
+      note: '原创氛围表，用于补充描写；规则上的场景表请使用基本规则书「学校场景表」。' },
+    { id: 'emotion', label: '感情表', type: 'table', dice: '1D6', rows: [
+      [1, '<b>共感</b>（正）／<b>不信</b>（负）'], [2, '<b>友情</b>（正）／<b>愤怒</b>（负）'], [3, '<b>爱情</b>（正）／<b>嫉妒</b>（负）'],
+      [4, '<b>忠诚</b>（正）／<b>侮蔑</b>（负）'], [5, '<b>憧憬</b>（正）／<b>自卑</b>（负）'], [6, '<b>狂信</b>（正）／<b>杀意</b>（负）'] ],
+      note: '感情判定成功时，双方各自从掷出的一组中选择正面或负面感情。' },
+    { id: 'status', label: '变调表', type: 'table', dice: '1D6', rows: [
+      [1, '<b>故障</b>　所持忍具全部无法使用。<small>每巡结束时《机关术》判定成功则恢复</small>'],
+      [2, '<b>麻痹</b>　随机选择一个已修得特技，视为无法使用。<small>每巡结束时《身体操术》判定成功则恢复</small>'],
+      [3, '<b>重伤</b>　每次进行命中、情报、感情判定时，受到 1 点接近战伤害。<small>每巡结束时《生存术》判定成功则恢复</small>'],
+      [4, '<b>行踪不明</b>　主要阶段中，无法登场于自己以外角色为场景玩家的场景。<small>每巡结束时《经济力》判定成功则恢复</small>'],
+      [5, '<b>忘却</b>　随机选择一个已获得的【感情】，视为未获得。<small>每巡结束时《记忆术》判定成功则恢复</small>'],
+      [6, '<b>诅咒</b>　随机选择一个已修得忍法，视为未修得。<small>每巡结束时《咒术》判定成功则恢复</small>'] ],
+      note: '恢复所用特技请以所用规则书版本为准。' },
+    { id: 'fumble', label: '大失败表', type: 'table', dice: '1D6', rows: [
+      [1, '状态不太对劲。本巡内所有行为判定 -1。'], [2, '糟了！失去一个任选的忍具。'],
+      [3, '情报泄露！除你以外的所有角色，可以从你的【秘密】或【居所】中任选一项获知。'],
+      [4, '大意了！术的控制失败，失去任选 1 点【生命力】。'], [5, '敌人的阴谋？中了陷阱，随机受到一种变调。'], [6, '呼——好险。什么也没有发生。'] ] }
+  ]
+}
+
+/* <sealstage-runtime v1>
+ * SealStage —— 小剧场网页组件的统一运行时（粘贴进每个需要同步的组件）。
+ * · 在 SealChat iForm 内：通过 Channel Embed SDK 使用 Storage（持久状态）与 Events（瞬时特效）。
+ * · 独立预览时：回落到 BroadcastChannel + localStorage，本机多个标签/iframe 之间同步。
+ * · Storage / Events 的作用域是 (频道, iForm)：同一个 iForm 被多次放上舞台时共享状态。
+ * API：
+ *   Stage.ready            Promise，完成连接或回落后 resolve
+ *   Stage.mode             'sealchat' | 'local' | 'unsynced'
+ *   Stage.gm               当前用户是否为 World Owner/Admin（本地预览恒为 true，?gm=0 可模拟玩家）
+ *   Stage.get(key)         读取已同步的状态
+ *   Stage.set(key, value)  写入并广播（乐观更新）
+ *   Stage.onState(fn)      fn(key, value)，任何状态变化（含首次拉取）
+ *   Stage.emit(topic, p)   广播瞬时事件（本地立即触发一次，远端回声自动去重）
+ *   Stage.on(topic, fn)    订阅瞬时事件
+ *   Stage.onGM(fn)         GM 身份变化
+ */
+const Stage = (() => {
+  const NS = (typeof STAGE_NS === 'string' && STAGE_NS) || 'sealstage'
+  const cfg = window.__SEALCHAT_EMBED_CONFIG__ || {}
+  const q = new URLSearchParams(location.search)
+  const hostOrigin = q.get('hostOrigin') || cfg.hostOrigin || ''
+  const sdkUrl = q.get('sdkUrl') || cfg.sdkUrl || ''
+  const framed = window.parent !== window
+  const state = {}, stateFns = new Set(), gmFns = new Set(), evtFns = {}, seen = new Set(), topics = new Set()
+  let client = null, retry = 1000
+  const api = { mode: 'local', gm: q.get('gm') !== '0', ready: null }
+
+  const fireState = (k, v) => { if (v === undefined) delete state[k]; else state[k] = v; stateFns.forEach(fn => { try { fn(k, v) } catch (e) { console.error(e) } }) }
+  const fireEvt = (topic, p) => {
+    if (p && p._id) { if (seen.has(p._id)) return; seen.add(p._id); if (seen.size > 500) seen.delete(seen.values().next().value) }
+    (evtFns[topic] || []).forEach(fn => { try { fn(p || {}) } catch (e) { console.error(e) } })
+  }
+  const setGM = v => { if (api.gm === v) return; api.gm = v; gmFns.forEach(fn => fn(v)) }
+
+  /* ---------- 本地回落：BroadcastChannel + localStorage（均可能被沙箱禁止，全部 try） ---------- */
+  let bc = null
+  const lsKey = k => `${NS}:${k}`
+  const lsRead = () => { try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(NS + ':')) state[k.slice(NS.length + 1)] = JSON.parse(localStorage.getItem(k)) } } catch {} }
+  const lsWrite = (k, v) => { try { v === undefined ? localStorage.removeItem(lsKey(k)) : localStorage.setItem(lsKey(k), JSON.stringify(v)) } catch {} }
+  const local = () => {
+    try { bc = new BroadcastChannel(NS); bc.onmessage = e => { const m = e.data || {}; if (api.mode === 'sealchat') return; if (m.t === 's') fireState(m.k, m.v); else if (m.t === 'e') fireEvt(m.topic, m.p) } } catch {}
+    lsRead(); Object.keys(state).forEach(k => fireState(k, state[k]))
+  }
+  const bcPost = m => { try { bc && bc.postMessage(m) } catch {} }
+
+  /* ---------- SealChat Embed ---------- */
+  const loadSdk = () => window.SealChatEmbed ? Promise.resolve() : new Promise((res, rej) => {
+    const s = document.createElement('script'); s.src = sdkUrl; s.async = true
+    s.onload = () => window.SealChatEmbed ? res() : rej(new Error('SDK missing')); s.onerror = () => rej(new Error('SDK load failed'))
+    document.head.appendChild(s)
+  })
+  const pullAll = async () => {
+    const snap = await client.storage.snapshot()
+    const docs = (snap && (snap.documents || snap.items)) || []
+    docs.forEach(d => fireState(d.key, d.value))
+  }
+  const connect = async () => {
+    await loadSdk()
+    const c = await window.SealChatEmbed.connect({ targetOrigin: hostOrigin || undefined, timeoutMs: 10000 })
+    client = c; api.mode = 'sealchat'; retry = 1000
+    c.session.onClosed(() => { if (client !== c) return; client = null; setTimeout(() => connect().catch(reconnect), retry) })
+    c.storage.onChanged(async ch => {
+      if (!ch) return
+      if (ch.kind === 'resynced') return pullAll().catch(() => {})
+      if (!ch.key) return
+      if (ch.kind === 'delete' || ch.op === 'delete') return fireState(ch.key, undefined)
+      if ('value' in ch && ch.value !== undefined) return fireState(ch.key, ch.value)
+      const doc = await c.storage.get(ch.key).catch(() => null); fireState(ch.key, doc ? doc.value : undefined)
+    })
+    topics.forEach(t => c.events.on(t, p => fireEvt(t, p)))
+    const applyPerm = p => setGM(!!(p && (p.canManageWorld || p.isWorldAdmin || p.isWorldOwner)))
+    try { c.permissions.onChanged(applyPerm); applyPerm(await c.permissions.getCurrent()) } catch { setGM(false) }
+    await pullAll().catch(() => {})
+  }
+  const reconnect = err => {
+    const code = err && err.code
+    if (code && !['HANDSHAKE_FAILED', 'SESSION_EXPIRED', 'CONTEXT_CHANGED', 'TIMEOUT', 'WS_OFFLINE', 'INTERNAL_ERROR'].includes(code)) { console.warn('[SealStage]', code, err.message); return }
+    setTimeout(() => connect().catch(reconnect), retry); retry = Math.min(retry * 2, 30000)
+  }
+
+  api.ready = (async () => {
+    if (framed && hostOrigin && sdkUrl) {
+      api.gm = false
+      try { await connect() } catch (e) { reconnect(e) }
+    } else {
+      // 本地预览页与组件同源，可访问 parent；SealChat 里未启用 Embed API 或裸外链时访问会抛错
+      let parentSame = false
+      try { parentSame = !!window.parent.location.href } catch {}
+      if (framed && !parentSame) { api.mode = 'unsynced'; api.gm = false }
+      local()
+    }
+  })()
+
+  api.get = k => state[k]
+  api.set = async (k, v) => {
+    fireState(k, v)
+    if (client) { try { await client.storage.set(k, v) } catch (e) { console.warn('[SealStage] storage.set', e && e.code, e && e.message) } }
+    else { lsWrite(k, v); bcPost({ t: 's', k, v }) }
+  }
+  // 新订阅者立即收到当前全部状态（本地模式的初始状态在组件注册前就已读出）
+  api.onState = fn => { stateFns.add(fn); Object.keys(state).forEach(k => fn(k, state[k])); return () => stateFns.delete(fn) }
+  api.onGM = fn => { gmFns.add(fn); return () => gmFns.delete(fn) }
+  api.on = (topic, fn) => {
+    (evtFns[topic] = evtFns[topic] || []).push(fn)
+    if (!topics.has(topic)) { topics.add(topic); if (client) client.events.on(topic, p => fireEvt(topic, p)) }
+  }
+  api.emit = async (topic, payload) => {
+    const p = Object.assign({}, payload, { _id: Math.random().toString(36).slice(2) + Date.now().toString(36), _at: Date.now() })
+    fireEvt(topic, p)
+    if (client) { try { await client.events.publish(topic, p) } catch (e) { console.warn('[SealStage] events.publish', e && e.code) } }
+    else bcPost({ t: 'e', topic, p })
+  }
+  return api
+})()
+/* </sealstage-runtime> */
+
+const $ = id => document.getElementById(id)
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+let current = null, revealed = {}, unseen = new Set()
+
+function toc () {
+  let pg = 2
+  $('list').innerHTML = DATA.tabs.map((t, i) => {
+    const h = `<button class="ent" data-id="${t.id}"><span class="no">${String(i + 1).padStart(2, '0')}</span><span class="nm">${esc(t.label)}</span><span class="pg">p.${String(pg).padStart(2, '0')}</span>${unseen.has(t.id) ? '<span class="dot"></span>' : ''}</button>`
+    pg += t.type === 'table' ? 2 : 3
+    return h
+  }).join('')
+}
+const dieHTML = (v, p) => `<span class="die${p ? ' p' : ''}">${v}</span>`
+
+function open (id) {
+  const t = DATA.tabs.find(x => x.id === id); if (!t) return
+  current = id; unseen.delete(id)
+  $('ptitle').innerHTML = `${esc(t.label)}<span aria-hidden="true">${esc(t.label)}</span>`
+  $('ptools').innerHTML = t.type === 'table' ? `<span class="dice" id="dice">${dieHTML('·')}${t.dice === '2D6' ? dieHTML('·', true) : ''}</span> <button class="btn pk" id="roll">掷 ${t.dice}</button>` : ''
+  render(t)
+  document.body.classList.add('open')
+  if ($('roll')) $('roll').onclick = () => roll(t)
+}
+function back () { current = null; document.body.classList.remove('open'); toc() }
+
+function render (t) {
+  const b = $('pbody')
+  if (t.type === 'table') {
+    b.innerHTML = `<div class="rows">${t.rows.map(([n, txt]) => `<div class="row" data-n="${n}"><span class="n">${n}</span><span class="t">${txt}</span></div>`).join('')}</div>${t.note ? `<p class="note">※ ${t.note}</p>` : ''}`
+  } else if (t.type === 'cards') {
+    b.innerHTML = `<div class="cards">${t.cards.map((c, i) => {
+      const key = `${t.id}:${i}`, isOpen = revealed[key], sealed = c.sealed && !isOpen
+      const gm = (c.reveal || c.sealed) && Stage.gm ? `<div class="gmrow"><span class="btn${sealed ? '' : ' pk'}" data-reveal="${key}">${isOpen ? 'GM · 封回' : 'GM · 剪开'}</span></div>` : ''
+      const front = sealed
+        ? `<div class="face seal"><span class="k">${esc(c.tag)}</span><h3>密封页</h3><p>${esc(c.sealedText || '尚未公开')}</p>${gm}</div>`
+        : `<div class="face${c.sealed ? ' cut' : ''}"><span class="big">${esc(c.big || '')}</span><span class="k">${esc(c.tag)}</span><h3>${esc(c.title)}</h3><p>${esc(c.body)}</p>${c.reveal && isOpen ? `<p class="rv">${esc(c.reveal)}</p>` : ''}${gm}${c.back ? '<span class="hint">点击翻面 ↻</span>' : ''}</div>`
+      return `<div class="card" data-i="${i}" role="button" tabindex="0"><div class="in">${front}
+        <div class="face back"><span class="k">${esc(c.tag)}</span><h3>${esc(c.title)}</h3><p>${esc(c.back || '')}</p></div></div></div>`
+    }).join('')}</div>`
+    b.querySelectorAll('.card').forEach(el => el.onclick = e => {
+      const r = e.target.closest('[data-reveal]')
+      if (r) { e.stopPropagation(); const k = r.dataset.reveal; Stage.set('revealed', Object.assign({}, revealed, { [k]: !revealed[k] })); return }
+      const c = t.cards[el.dataset.i]; if (c.back && !(c.sealed && !revealed[`${t.id}:${el.dataset.i}`])) el.classList.toggle('flip')
+    })
+  } else b.innerHTML = `<div class="text">${t.html}</div>`
+  b.scrollTop = 0
+}
+
+/* 掷骰：广播结果，所有人播放同样的落点 */
+function roll (t) {
+  const n = t.dice === '2D6' ? 2 : 1
+  Stage.emit('dossier.roll', { tab: t.id, vals: Array.from({ length: n }, () => 1 + (Math.random() * 6 | 0)) })
+}
+function playRoll (tabId, vals) {
+  const t = DATA.tabs.find(x => x.id === tabId); if (!t) return
+  const sum = vals.reduce((a, b) => a + b, 0), row = t.rows.find(r => r[0] === sum)
+  if (current !== tabId) { unseen.add(tabId); if (!current) toc() }
+  toast(`${esc(t.label)} · ${t.dice} → <b>${sum}</b>　${row ? row[1].replace(/<small>.*<\/small>/, '').replace(/<[^>]+>/g, '') : ''}`)
+  if (current !== tabId) return
+  const dice = $('dice'), rows = [...$('pbody').querySelectorAll('.row')]
+  rows.forEach(r => r.classList.remove('hit', 'flash'))
+  let k = 0
+  const spin = setInterval(() => {
+    dice.innerHTML = vals.map((_, i) => dieHTML(1 + (Math.random() * 6 | 0), i === 1)).join('')
+    dice.querySelectorAll('.die').forEach(d => d.classList.add('roll'))
+    rows.forEach((r, i) => r.classList.toggle('flash', i === k % rows.length)); k++
+  }, 70)
+  setTimeout(() => {
+    clearInterval(spin)
+    dice.innerHTML = vals.map((v, i) => dieHTML(v, i === 1)).join('')
+    rows.forEach(r => r.classList.remove('flash'))
+    const hit = rows.find(r => Number(r.dataset.n) === sum)
+    if (hit) { hit.classList.add('hit'); hit.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }
+  }, 900)
+}
+let toastTimer = 0
+function toast (html) { const el = $('toast'); el.innerHTML = html; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 5200) }
+
+$('list').onclick = e => { const b = e.target.closest('.ent'); if (b) open(b.dataset.id) }
+$('back').onclick = back
+Stage.on('dossier.roll', p => playRoll(p.tab, p.vals || [1]))
+Stage.onState((k, v) => { if (k === 'revealed') { revealed = v || {}; const t = DATA.tabs.find(x => x.id === current); if (t && t.type === 'cards') render(t) } })
+Stage.onGM(() => { const t = DATA.tabs.find(x => x.id === current); if (t) render(t) })
+Stage.ready.then(() => { if (Stage.mode === 'unsynced') $('warn').textContent = '未启用 Embed API：掷骰与公开不会同步' })
+toc()
+</script>
+</body>
+</html>

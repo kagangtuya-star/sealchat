@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>乐园 · 孔版会志 · 房间预览</title>
+<!--
+  本地预览台：模拟 SealChat 小剧场的场景切换与图层叠放。不需要上传到 SealChat。
+  需通过 http 打开（例如在仓库根目录运行 python3 -m http.server），组件之间用 BroadcastChannel 同步。
+-->
+<style>
+  :root { --bg: #12152a; --panel: #1b1f38; --line: #343a5c; --text: #e8ebf5; --muted: #9aa3c0; --accent: #ff48b0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 14px/1.6 "Noto Sans SC", "PingFang SC", sans-serif; display: grid; grid-template-columns: 1fr 440px; gap: 16px; padding: 16px; }
+  @media (max-width: 1100px) { body { grid-template-columns: 1fr; } }
+  h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: .3em; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .viewport { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; overflow: hidden; border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+  #stage iframe { position: absolute; border: 0; background: transparent; }
+  .nointeract { pointer-events: none; }
+  .ph { position: absolute; left: 480px; top: 140px; width: 960px; height: 540px; display: grid; place-items: center; background: linear-gradient(160deg, #e7b98f, #c86d7c 60%, #4a3b6a); color: #fff; font-size: 28px; letter-spacing: .3em; outline: 2px dashed rgba(255,255,255,.6); outline-offset: -2px; }
+  aside { display: flex; flex-direction: column; gap: 14px; }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .box h2 { margin: 0 0 8px; font-size: 13px; letter-spacing: .3em; color: var(--muted); font-weight: 400; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  button { font: inherit; color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--text); }
+  button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  label { display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; cursor: pointer; }
+  #console { width: 100%; height: 660px; border: 0; display: block; }
+  .float { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .float .bar { padding: 4px 10px; font-size: 12px; color: var(--muted); background: #20254a; border-bottom: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<main>
+  <h1>乐园 · 孔版会志 · 房间预览</h1>
+  <p class="hint">左侧为 1920×1080 舞台（按场景挂载组件），右侧为 GM 打开的 iForm 浮窗。操作控制台，舞台上的「时牢特效层」会同步播放；奥付会续写"第 N 刷"。</p>
+  <div class="viewport" id="vp"><div id="stage"></div></div>
+</main>
+<aside>
+  <div class="box">
+    <h2>小剧场场景</h2>
+    <div class="row" id="scenes">
+      <button data-s="prologue">序幕</button>
+      <button data-s="day" class="on">清陵学园</button>
+      <button data-s="night">终焉之夜</button>
+    </div>
+  </div>
+  <div class="box">
+    <h2>图层</h2>
+    <label><input type="checkbox" data-l="ambient" checked>氛围层</label>
+    <label><input type="checkbox" data-l="dossier" checked>目次（资料夹）</label>
+    <label><input type="checkbox" data-l="overlay" checked>时牢特效层</label>
+    <label><input type="checkbox" data-l="ph">示例场景图</label>
+    <label><input type="checkbox" data-l="dlg">对话框（示例）</label>
+  </div>
+  <div class="box">
+    <h2>GM 浮窗 · 时牢操作面板</h2>
+    <div class="row" style="margin-bottom:8px"><label><input type="checkbox" id="player">以玩家视角查看</label></div>
+    <div class="float"><div class="bar">iForm 浮窗（同一个「乐园 · 时牢」iForm，小尺寸自动成为控制台）</div><iframe id="console" src="04-core.html?role=console"></iframe></div>
+  </div>
+</aside>
+<script>
+const $ = id => document.getElementById(id)
+const L = { ambient: true, dossier: true, overlay: true, ph: false, dlg: false }
+let scene = 'day'
+const DLG = v => [`07-dialogue-box.html?mode=stage${v === 'night' ? '&variant=night' : ''}`, 96, 745.2, 1728, 302.4, 'nointeract']   // SealChat 默认对话框位置，对话框层在所有舞台对象之上
+const common = v => [
+  L.ph && 'ph',
+  L.ambient && [`06-ambient.html${v === 'night' ? '?mode=night' : ''}`, 0, 0, 1920, 1080, 'nointeract'],
+  L.dossier && ['05-dossier.html', 1445, 130, 460, 470, ''],
+  L.overlay && ['04-core.html?role=overlay', 0, 0, 1920, 1080, 'nointeract'],
+  L.dlg && DLG(v)
+]
+const layers = {
+  prologue: () => [['01-opening.html', 0, 0, 1920, 1080, '']],
+  day: () => [['02-stage-day.html', 0, 0, 1920, 1080, 'nointeract'], ...common('day')],
+  night: () => [['03-stage-night.html', 0, 0, 1920, 1080, 'nointeract'], ...common('night')]
+}
+function mount () {
+  $('stage').innerHTML = layers[scene]().filter(Boolean).map(l => l === 'ph'
+    ? '<div class="ph">场景图对象 · 960×540</div>'
+    : `<iframe src="${l[0]}" class="${l[5]}" style="left:${l[1]}px;top:${l[2]}px;width:${l[3]}px;height:${l[4]}px"></iframe>`).join('')
+}
+function fit () { $('stage').style.transform = `scale(${$('vp').clientWidth / 1920})` }
+new ResizeObserver(fit).observe($('vp'))
+$('scenes').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return
+  scene = b.dataset.s; document.querySelectorAll('#scenes button').forEach(x => x.classList.toggle('on', x === b)); mount()
+}
+document.querySelectorAll('[data-l]').forEach(c => c.onchange = () => { L[c.dataset.l] = c.checked; mount() })
+$('player').onchange = e => { $('console').src = '04-core.html?role=console' + (e.target.checked ? '&gm=0' : '') }
+mount(); fit()
+</script>
+</body>
+</html>

@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>乐园 · 孔版会志 · 主舞台</title>
+<!--
+  《乐园》孔版会志房间 · 主舞台（铺满、最底层、不可交互）
+  整个舞台是同好会为文化祭赶印的会志封面：再生纸 + 荧光粉 / 蓝 两块版，故意留着套色错位。
+  · 主窗 960×540 @ (480,140)：封面配图框，四角裁切线（トンボ），场景图对齐这里即"印"在封面上。
+  · 右翼 (1450,130) 起留给资料夹 iForm（目次）；右下是奥付，演出核心会在这里续写"第 N 刷"。
+  · CONFIG.variant：'day' 日景（再生纸）· 'night' 终焉之夜（印在深蓝色纸上）。
+  · 本地预览可用 ?variant=night 覆盖。
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=ZCOOL+QingKe+HuangYou&family=Noto+Sans+SC:wght@400;700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<style>
+  :root {
+    --paper: #f3eee2; --blue: #0078bf; --pink: #ff48b0; --blend: multiply; --staple: #a9b0b8;
+    --disp: "ZCOOL QingKe HuangYou", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: "Space Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+  #stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: 50% 50%; overflow: hidden; background: var(--paper); }
+  .layer { position: absolute; inset: 0; }
+  .layer > svg { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; }
+  #blue { color: var(--blue); }
+  #pink { color: var(--pink); mix-blend-mode: var(--blend); translate: var(--mx, 3px) var(--my, 2px); transition: translate 1.4s cubic-bezier(.3,1.5,.5,1); }
+  #specks { pointer-events: none; }
+  text { font-family: var(--sans); fill: currentColor; }
+  .disp { font-family: var(--disp); }
+  .mono { font-family: var(--mono); }
+  .flag { transform-box: fill-box; transform-origin: 50% 0; animation: flap 5s ease-in-out infinite; }
+  .flag:nth-child(3n) { animation-duration: 6.2s; animation-delay: -2s; }
+  .flag:nth-child(4n+1) { animation-delay: -3.5s; }
+  @keyframes flap { 0%, 100% { rotate: -5deg } 50% { rotate: 5deg } }
+  .spin { transform-box: view-box; animation: spin 260s linear infinite; }
+  @keyframes spin { to { rotate: 360deg } }
+  @media (prefers-reduced-motion: reduce) { .flag, .spin { animation: none; } #pink { transition: none; } }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="layer" id="blue"></div>
+  <div class="layer" id="pink"></div>
+  <div class="layer" id="specks"></div>
+</div>
+<script>
+const CONFIG = {
+  variant: 'day',                       // day | night
+  club: '同好会',                        // 社团名：PL 决定后可改，例如 '轻音同好会'
+  title: ['乐', '园'],
+  tagline: '明天，就是文化祭。',
+  caption: '▲ 社团教室，九月三十日。',
+  members: ['PC①', 'PC②', 'PC③', 'PC④', '水波薰', '诸星真琴'],
+  info: [['类型', '特殊型'], ['规制', '现代篇'], ['人数', '四人'], ['时限', '四巡']],
+  treasure: '文化祭的回忆',
+  credit: '原作 河岛陶一朗 · 译 透'
+}
+const qs = new URLSearchParams(location.search)
+const V = qs.get('variant') || CONFIG.variant
+const NIGHT = V === 'night'
+const root = document.documentElement.style
+if (NIGHT) { root.setProperty('--paper', '#141a3d'); root.setProperty('--blue', '#9ab8ee'); root.setProperty('--pink', '#ff4fb6'); root.setProperty('--blend', 'screen'); root.setProperty('--staple', '#56607a') }
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+const $ = id => document.getElementById(id)
+
+/* ---------- 工具 ---------- */
+let seed = 30
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+// 网点：在旋转网格上按 f(x,y)∈[0,1] 决定点径，整片合成一条 path
+function dots (x0, y0, x1, y1, step, ang, f) {
+  const a = ang * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2
+  const R = Math.hypot(x1 - x0, y1 - y0) / 2 + step
+  let d = ''
+  for (let u = -R; u <= R; u += step) for (let v = -R; v <= R; v += step) {
+    const x = cx + u * c - v * s, y = cy + u * s + v * c
+    if (x < x0 || x > x1 || y < y0 || y > y1) continue
+    const r = f(x, y) * step * .56
+    if (r < .7) continue
+    d += `M${(x - r).toFixed(1)} ${y.toFixed(1)}a${r.toFixed(1)} ${r.toFixed(1)} 0 1 0 ${(2 * r).toFixed(1)} 0a${r.toFixed(1)} ${r.toFixed(1)} 0 1 0 ${(-2 * r).toFixed(1)} 0`
+  }
+  return d
+}
+const clamp = v => Math.max(0, Math.min(1, v))
+// 竖排：逐字摆放；句读挪到字格右上角（竖排习惯）
+const vtext = (chars, x, y, size, gap, attrs = '') => [...chars].map((ch, i) => {
+  const p = '，。、'.includes(ch)
+  return `<text x="${p ? x + size * .42 : x}" y="${y + i * (size + gap) - (p ? size * .5 : 0)}" font-size="${size}" text-anchor="middle" dominant-baseline="hanging" ${attrs}>${ch}</text>`
+}).join('')
+const W = { x: 480, y: 140, w: 960, h: 540 }
+
+/* ---------- 彩旗（两块版各印一部分，叠印处是紫） ---------- */
+function bunting (plate) {
+  let line = '', flags = ''
+  const hooks = [0, 480, 960, 1440, 1920], sag = 16
+  for (let k = 0; k < hooks.length - 1; k++) {
+    const a = hooks[k], b = hooks[k + 1]
+    if (NIGHT && k === 2) { if (plate === 'blue') line += `<path d="M${a} 10 Q${a + 60} 30 ${a + 110} 70" fill="none" stroke="currentColor" stroke-width="1.6"/>`; continue }
+    if (plate === 'blue') line += `<path d="M${a} 10 Q${(a + b) / 2} ${10 + sag * 2} ${b} 10" fill="none" stroke="currentColor" stroke-width="1.6"/>`
+    for (let x = a + 30; x < b - 10; x += 56) {
+      const t = (x - a) / (b - a), y = 10 + sag * 4 * t * (1 - t)
+      const i = Math.round(x / 56)
+      const ink = i % 3   // 0 粉 · 1 蓝 · 2 叠印
+      if (NIGHT && rnd() < .3) continue
+      if ((plate === 'pink' && ink !== 1) || (plate === 'blue' && ink !== 0)) flags += `<path class="flag" d="M${x - 13} ${y} L${x + 13} ${y} L${x} ${y + 26} Z" fill="currentColor"/>`
+    }
+  }
+  return line + `<g>${flags}</g>`
+}
+
+/* ---------- 主窗（封面配图框） ---------- */
+function crop () {
+  const { x, y, w, h } = W, o = 14, l = 44
+  const c = [[x, y, -1, -1], [x + w, y, 1, -1], [x, y + h, -1, 1], [x + w, y + h, 1, 1]]
+  return c.map(([px, py, sx, sy]) => `<path d="M${px + sx * o} ${py} h${sx * l} M${px} ${py + sy * o} v${sy * l} M${px + sx * (o + 8)} ${py + sy * 8} h${sx * (l - 8)} M${px + sx * 8} ${py + sy * (o + 8)} v${sy * (l - 8)}" stroke="currentColor" stroke-width="1.2" fill="none"/>`).join('')
+}
+const target = (x, y, r = 11) => `<g stroke="currentColor" stroke-width="1.2" fill="none"><circle cx="${x}" cy="${y}" r="${r}"/><circle cx="${x}" cy="${y}" r="${r * .45}"/><path d="M${x - r * 1.7} ${y} H${x + r * 1.7} M${x} ${y - r * 1.7} V${y + r * 1.7}"/></g>`
+
+function photo (plate) {
+  const { x, y, w, h } = W
+  if (plate === 'blue') {
+    // 天空：上浓下淡的蓝网点（15°）＋ 社团教室的窗框剪影
+    const sky = dots(x, y, x + w, y + h, 13, 15, (px, py) => NIGHT ? clamp(.75 - (py - y) / h * .35) : clamp(.62 - (py - y) / h * .7))
+    const mx = x + w * .5, top = y + 40
+    // 夜景：窗框不着墨，留出纸色剪影
+    const frame = `<g fill="${NIGHT ? 'var(--paper)' : 'currentColor'}">
+      <rect x="${x}" y="${y}" width="${w}" height="34"/><rect x="${x}" y="${y + h - 70}" width="${w}" height="70"/>
+      <rect x="${mx - 9}" y="${y}" width="18" height="${h}"/><rect x="${x + 150}" y="${y}" width="10" height="${h - 60}"/><rect x="${x + w - 160}" y="${y}" width="10" height="${h - 60}"/>
+      <rect x="${x}" y="${top + 200}" width="${w}" height="9"/>
+      <path d="M${x} ${y + 34} C${x + 80} ${y + 160} ${x + 40} ${y + 330} ${x + 110} ${y + h - 70} L${x} ${y + h - 70}Z" opacity=".9"/>
+      <path d="M${x + w} ${y + 34} C${x + w - 60} ${y + 200} ${x + w - 20} ${y + 360} ${x + w - 90} ${y + h - 70} L${x + w} ${y + h - 70}Z" opacity=".9"/>
+    </g>`
+    return `<g opacity="${NIGHT ? .9 : .78}"><path d="${sky}" fill="currentColor"/>${frame}</g>`
+  }
+  // 粉版：夕光（75°），日景从地平线泛起，夜景只剩窗角一点霓虹
+  const glow = dots(x, y, x + w, y + h, 13, 75, (px, py) => NIGHT
+    ? clamp(.5 - Math.hypot(px - (x + w * .8), py - (y + h * .7)) / 420)
+    : clamp((py - y) / h * 1.05 - .12 - Math.abs(px - (x + w * .58)) / w * .5))
+  return `<path d="${glow}" fill="currentColor"/>`
+}
+
+/* ---------- 左翼：报头、巨大标题、标语、信息 ---------- */
+function leftWing (plate) {
+  if (plate === 'blue') {
+    const title = dots(150, 110, 460, 680, 7, 45, () => .62)
+    return `
+      <text x="56" y="76" font-size="21" font-weight="900" letter-spacing="2">清陵学园 · ${CONFIG.club}会志</text>
+      <text x="56" y="104" font-size="13" class="mono" letter-spacing="3">SPECIAL ISSUE · 文化祭特刊</text>
+      <line x1="56" y1="118" x2="440" y2="118" stroke="currentColor" stroke-width="2"/>
+      <text x="58" y="160" font-size="20" class="mono" font-weight="700">No.</text>
+      <text x="60" y="292" font-size="15" class="mono" letter-spacing="4">SEP.</text>
+      <defs><clipPath id="tclip">${vtext(CONFIG.title, 300, 136, 250, 6, 'class="disp"')}</clipPath></defs>
+      <g transform="translate(12 12)" clip-path="url(#tclip)"><path d="${title}" fill="currentColor"/></g>
+      ${vtext(CONFIG.tagline, 112, 330, 25, 3, 'font-weight="700"')}
+      <line x1="56" y1="636" x2="440" y2="636" stroke="currentColor" stroke-width="1"/>
+      ${CONFIG.info.map(([k, v], i) => `<text x="${56 + (i % 2) * 190}" y="${662 + (i >> 1) * 24}" font-size="15"><tspan font-weight="700" fill-opacity=".55">${k}</tspan>　${v}</text>`).join('')}
+      <text x="56" y="710" font-size="15"><tspan font-weight="700" fill-opacity=".55">秘宝</tspan>　${CONFIG.treasure}</text>
+      <text x="56" y="733" font-size="12" fill-opacity=".7">${CONFIG.credit}</text>
+      <text x="22" y="1000" font-size="11" class="mono" letter-spacing="6" transform="rotate(-90 22 1000)">RAKUEN · ${NIGHT ? 'LAST NIGHT' : 'THE DAY BEFORE'}</text>`
+  }
+  return `
+    ${vtext(CONFIG.title, 300, 136, 250, 6, 'class="disp"')}
+    <text x="52" y="270" font-size="118" class="mono" font-weight="700" letter-spacing="-8">30</text>
+    <path d="M112 322 V${330 + CONFIG.tagline.length * 28}" stroke="currentColor" stroke-width="30" stroke-linecap="round" opacity=".42"/>
+    ${NIGHT ? `<path d="M100 318 L126 ${336 + CONFIG.tagline.length * 28}" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>` : ''}
+    ${CONFIG.info.map(([k], i) => `<rect x="${52 + (i % 2) * 190}" y="${650 + (i >> 1) * 24}" width="4" height="15" fill="currentColor"/>`).join('')}
+    <rect x="52" y="698" width="4" height="15" fill="currentColor"/>
+    ${rabbit(430, 612)}`
+}
+// 社团吉祥物印章：圆框里的兔子剪影（契兔 / 月的伏笔，只是一枚可爱的印章）
+function rabbit (cx, cy) {
+  return `<g transform="translate(${cx} ${cy}) rotate(-12)" fill="currentColor">
+    <circle r="34" fill="none" stroke="currentColor" stroke-width="3"/><circle r="28" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="2 3"/>
+    <path d="M-12 14 C-20 4 -12 -6 -2 -4 C-4 -18 -6 -26 -2 -27 C2 -27 3 -16 2 -6 C4 -14 8 -24 12 -23 C15 -22 10 -10 6 -3 C14 0 18 10 12 16 Z"/>
+    <circle cx="16" cy="14" r="3.4"/></g>`
+}
+
+/* ---------- 右翼：目次抬头、网点太阳 / 月、奥付 ---------- */
+function rightWing (plate) {
+  if (plate === 'blue') {
+    const moon = NIGHT ? `<path d="${dots(1440, -300, 1920, 420, 12, 15, (x, y) => clamp(1.15 - Math.hypot(x - 1790, y - 70) / 330))}" fill="currentColor" opacity=".9"/><circle cx="1790" cy="70" r="350" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="3 7"/>` : ''
+    return `${moon}
+      <text x="1478" y="74" font-size="13" class="mono" letter-spacing="5">CONTENTS</text>
+      <text x="1476" y="114" font-size="36" font-weight="900" letter-spacing="6">目次</text>
+      <line x1="1470" y1="126" x2="1880" y2="126" stroke="currentColor" stroke-width="2"/>
+      <line x1="1470" y1="606" x2="1880" y2="606" stroke="currentColor" stroke-width="2"/><line x1="1470" y1="611" x2="1880" y2="611" stroke="currentColor" stroke-width=".8"/>
+      <text x="1472" y="634" font-size="16" font-weight="900" letter-spacing="4">奥付</text>
+      <text x="1880" y="634" font-size="12" text-anchor="end">会志《${CONFIG.title.join('')}》文化祭特刊</text>
+      <text x="1472" y="655" font-size="11" fill-opacity=".75">发行　清陵学园 ${CONFIG.club}　／　印刷　学园印刷室（孔版）</text>
+      <text x="1472" y="678" font-size="13" class="mono">初版</text><text x="1880" y="678" font-size="13" text-anchor="end">九月三十日 发行</text>
+      <path d="M1600 674 H1752" stroke="currentColor" stroke-width="1.4" stroke-dasharray="1 5" stroke-linecap="round"/>
+      ${[697, 716, 735].map(y => `<path d="M1472 ${y + 3} H1880" stroke="currentColor" stroke-width=".5" opacity=".25"/>`).join('')}`
+  }
+  const sun = NIGHT ? `<path d="${dots(1650, -100, 1920, 250, 12, 75, (x, y) => clamp(.6 - Math.hypot(x - 1880, y - 20) / 260))}" fill="currentColor"/>`
+    : `<g class="spin" style="transform-origin:1830px 70px"><path d="${dots(1440, -280, 1920, 420, 13, 75, (x, y) => Math.pow(clamp(1 - Math.hypot(x - 1830, y - 70) / 340), .7))}" fill="currentColor"/></g>`
+  return `${sun}<text x="1512" y="678" font-size="13" class="mono" font-weight="700">第1刷</text>`
+}
+
+/* ---------- 版面周边：裁切线、套准标记、色标、订书钉、裁切虚线 ---------- */
+function marks (plate) {
+  if (plate === 'blue') {
+    return `${crop()}${target(960, 104)}${target(455, 410, 9)}${target(1465, 410, 9)}
+      <rect x="${W.x}" y="${W.y}" width="${W.w}" height="${W.h}" fill="none" stroke="currentColor" stroke-width="3"/>
+      <text x="${W.x}" y="712" font-size="17">${CONFIG.caption}${NIGHT ? '夜。' : ''}<tspan fill-opacity=".7">　左起：${CONFIG.members.join('　')}</tspan></text>
+      <text x="${W.x + W.w}" y="712" font-size="12" class="mono" text-anchor="end" fill-opacity=".6">PHOTO / ${CONFIG.club}</text>
+      <rect x="1020" y="96" width="16" height="16" fill="currentColor"/><path d="${dots(1040, 96, 1056, 112, 4, 15, () => .5)}" fill="currentColor"/>
+      <rect x="1100" y="96" width="16" height="16" fill="currentColor"/>
+      <g stroke="currentColor" stroke-width=".6" opacity="${NIGHT ? .07 : .13}">${Array.from({ length: 12 }, (_, i) => `<path d="M60 ${770 + i * 22} H1860"/>`).join('')}${Array.from({ length: 31 }, (_, i) => `<path d="M${60 + i * 60} 770 V1012"/>`).join('')}</g>
+      <path d="M60 1046 H1860" stroke="currentColor" stroke-width="1.2" stroke-dasharray="7 6" opacity=".35"/>
+      <text x="22" y="1052" font-size="20" opacity=".45">✂</text>
+      <text x="960" y="1072" font-size="12" class="mono" text-anchor="middle" opacity=".45">— 30 —</text>`
+  }
+  return `<rect x="1060" y="96" width="16" height="16" fill="currentColor"/><path d="${dots(1080, 96, 1096, 112, 4, 75, () => .5)}" fill="currentColor"/>
+    <rect x="1100" y="96" width="16" height="16" fill="currentColor"/>
+    <path d="${dots(0, 860, 520, 1080, 12, 75, (x, y) => clamp((y - 860) / 220 * .7 - x / 520 * .55))}" fill="currentColor" opacity=".8"/>
+    ${NIGHT ? tears() : ''}`
+}
+// 夜景：主窗四角被撕开的纸边
+function tears () {
+  const { x, y, w, h } = W
+  const jag = (x0, y0, dx, dy, n) => { let d = `M${x0} ${y0}`; for (let i = 1; i <= n; i++) d += ` L${x0 + dx * i / n + (i % 2 ? 6 : -6) * Math.sign(dy || 1)} ${y0 + dy * i / n + (i % 2 ? 6 : -6)}`; return d }
+  return `<g stroke="currentColor" stroke-width="2" fill="none">${[jag(x - 6, y + 90, 110, -96, 7), jag(x + w - 104, y - 6, 112, 100, 7), jag(x - 6, y + h - 120, 140, 126, 8), jag(x + w + 6, y + h - 90, -120, 96, 7)].join('')}</g>`
+}
+
+/* ---------- 组装 ---------- */
+const svg = inner => `<svg viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`
+$('blue').innerHTML = svg(bunting('blue') + photo('blue') + leftWing('blue') + rightWing('blue') + marks('blue') +
+  `<g fill="var(--staple)">${[250, 830].map(y => `<rect x="16" y="${y}" width="7" height="74" rx="2"/>`).join('')}</g>`)
+$('pink').innerHTML = svg(bunting('pink') + photo('pink') + leftWing('pink') + rightWing('pink') + marks('pink'))
+// 漏墨白点：在两块版之上撒一层纸色噪点，模拟孔版印刷的"吃墨不匀"
+$('specks').innerHTML = svg(`<filter id="sk" x="0" y="0" width="1920" height="1080" filterUnits="userSpaceOnUse">
+  <feTurbulence type="fractalNoise" baseFrequency=".045 .6" numOctaves="3" seed="11"/>
+  <feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -14 4.6"/>
+  <feComposite in="SourceGraphic" operator="in"/></filter>
+  <rect width="1920" height="1080" fill="var(--paper)" filter="url(#sk)" opacity=".7"/>
+  <filter id="gr"><feTurbulence type="fractalNoise" baseFrequency=".6" numOctaves="3" seed="4"/><feColorMatrix values="0 0 0 0 ${NIGHT ? '.6 0 0 0 0 .65 0 0 0 0 .8 0 0 0 .07' : '.35 0 0 0 0 .3 0 0 0 0 .22 0 0 0 .16'} 0"/></filter>
+  <rect width="1920" height="1080" filter="url(#gr)" style="mix-blend-mode:${NIGHT ? 'screen' : 'multiply'}"/>`)
+
+/* ---------- 缩放与"滚筒抖动"：粉版每隔一阵轻微跑位 ---------- */
+function fit () { const s = Math.max(innerWidth / 1920, innerHeight / 1080); $('stage').style.transform = `translate(-50%,-50%) scale(${s})` }
+addEventListener('resize', fit); fit()
+if (!reduced) {
+  const base = NIGHT ? [6, 4] : [3, 2]
+  const wobble = () => {
+    root.setProperty('--mx', (base[0] + (Math.random() * 3 - 1.5)).toFixed(1) + 'px')
+    root.setProperty('--my', (base[1] + (Math.random() * 3 - 1.5)).toFixed(1) + 'px')
+    setTimeout(wobble, 9000 + Math.random() * 9000)
+  }
+  wobble()
+}
+</script>
+</body>
+</html>

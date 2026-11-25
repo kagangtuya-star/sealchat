@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>乐园 · 孔版会志 · 氛围层</title>
+<!--
+  《乐园》孔版会志房间 · 氛围层（铺满、置顶、不可交互；背景透明）
+  打孔机落下的圆纸屑（粉 / 蓝 / 叠印紫）与少量剪碎的彩纸条，慢慢飘过两翼。
+  · CONFIG.mode：'day' 纸屑缓缓落下 · 'night' 纸屑倒着往上飘（时间倒流的不安），颜色改为荧光粉与月光蓝
+  · CONFIG.avoidCenter：主窗 960×540 @ (480,140) 内纸屑变淡，保护场景图
+  · 本地预览可用 ?mode=night 覆盖
+-->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const CONFIG = {
+  mode: 'day',          // day | night
+  density: 1,           // 数量倍率
+  speed: 1,
+  avoidCenter: true
+}
+const qs = new URLSearchParams(location.search)
+const MODE = qs.get('mode') || CONFIG.mode
+const NIGHT = MODE === 'night'
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+const COLORS = NIGHT ? ['#ff4fb6', '#9ab8ee', '#c792e8'] : ['#ff48b0', '#0078bf', '#7a3f9a']
+const cv = document.getElementById('c'), ctx = cv.getContext('2d')
+let W = 0, H = 0, S = 1, P = []
+
+function fit () {
+  const dpr = Math.min(devicePixelRatio || 1, 2)
+  W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  S = Math.max(W / 1920, H / 1080)
+  const n = Math.round(Math.min(48, W * H / 52000) * CONFIG.density)
+  while (P.length < n) P.push(spawn(true)); P.length = n
+}
+function spawn (anywhere) {
+  const strip = Math.random() < .18
+  return {
+    x: Math.random() * W, y: anywhere ? Math.random() * H : (NIGHT ? H + 20 : -20),
+    r: (strip ? 0 : 4 + Math.random() * 5) * S, w: (5 + Math.random() * 6) * S, h: (18 + Math.random() * 18) * S, strip,
+    c: COLORS[Math.random() * 3 | 0], a: Math.random() * Math.PI * 2, va: (Math.random() - .5) * .04,
+    vy: (NIGHT ? -1 : 1) * (.25 + Math.random() * .45) * S * CONFIG.speed, sw: Math.random() * Math.PI * 2, flip: Math.random() * Math.PI * 2
+  }
+}
+// 主窗区域内淡化、对话框区域（舞台 y > 745）减弱（舞台坐标 → 视口坐标）
+function centerFade (x, y) {
+  const ox = (W - 1920 * S) / 2, oy = (H - 1080 * S) / 2
+  const sx = (x - ox) / S, sy = (y - oy) / S
+  const low = sy > 745 ? .35 : 1
+  if (!CONFIG.avoidCenter) return low
+  const dx = Math.max(480 - sx, 0, sx - 1440), dy = Math.max(140 - sy, 0, sy - 680)
+  return Math.min(low, .15 + Math.hypot(dx, dy) / 160)
+}
+function draw (p) {
+  const k = Math.abs(Math.cos(p.flip))   // 翻转造成的扁平
+  ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.a)
+  ctx.globalAlpha = (NIGHT ? .75 : .85) * centerFade(p.x, p.y)
+  ctx.fillStyle = p.c
+  if (NIGHT) { ctx.shadowColor = p.c; ctx.shadowBlur = 8 * S }
+  ctx.beginPath()
+  if (p.strip) ctx.rect(-p.w / 2, -p.h / 2 * k, p.w, p.h * k)
+  else ctx.ellipse(0, 0, p.r, p.r * Math.max(.15, k), 0, 0, Math.PI * 2)
+  ctx.fill(); ctx.restore()
+}
+let last = performance.now()
+function tick (now) {
+  const dt = Math.min(3, (now - last) / 16.7); last = now
+  ctx.clearRect(0, 0, W, H)
+  for (const p of P) {
+    p.sw += .02 * dt; p.flip += .05 * dt; p.a += p.va * dt
+    p.y += p.vy * dt; p.x += Math.sin(p.sw) * .6 * S * dt
+    if ((!NIGHT && p.y > H + 30) || (NIGHT && p.y < -30)) Object.assign(p, spawn(false))
+    draw(p)
+  }
+  requestAnimationFrame(tick)
+}
+addEventListener('resize', fit); fit()
+if (reduced) { P.forEach(draw) } else requestAnimationFrame(tick)
+</script>
+</body>
+</html>

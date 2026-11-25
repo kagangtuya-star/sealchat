@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark"><!-- 跟随宿主配色方案 -->
+<title>对话框底图</title>
+<!--
+  SealStage · 对话框底图（设计源文件，不是 iForm 组件）
+  产物：透明底 PNG，上传到 SealChat「小剧场外观 → 对话框 → 对话框图片」。
+  导出：python3 scripts/export_png.py templates/dialogue-box.html out.png --query "theme=school&frame=board"
+  画布：默认 1920×336 = SealChat 默认对话框（舞台宽 90% × 高 28%）；改了对话框宽高比就用 ?w=&h=（或 --size）按新比例出图。
+  CONFIG.frame：scroll 卷轴 | ticket 车票 | screen 屏幕 | lattice 花窗 | board 黑板 —— 与 frame.html 的主窗边框一一对应
+  CONFIG.theme：ink | taisho | cosmic | washi | classic | school（同 frame.html 配色）
+  模式：默认 = 设计台（参考线 + 设置建议）；?mode=export = 只画底图；?mode=stage = 铺满视口并按 SealChat 排版叠示例文字
+  预览：?theme=taisho&frame=scroll&seal=幕
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'"><!-- 非阻塞加载 -->
+<style>
+  :root { --brush: "Ma Shan Zheng", "STXingkai", "KaiTi", serif; --serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; }
+  #art { position: relative; transform-origin: 0 0; }
+  #art > svg { position: absolute; left: 0; top: 0; overflow: visible; }
+  body.export, body.stage { overflow: hidden; }
+  body.export .ui, body.export .guide, body.export .sample, body.stage .ui, body.stage .guide { display: none !important; }
+  body.stage #art { position: absolute; left: 50%; top: 50%; transform-origin: 50% 50%; }
+  .sample { position: absolute; inset: 0; pointer-events: none; font-family: system-ui, "Noto Sans CJK SC", "PingFang SC", sans-serif; }
+  .sample .spk { position: absolute; left: 2.5%; top: 6.5%; width: 34%; height: 12%; display: flex; align-items: center; font-weight: 600; white-space: nowrap; color: #e8a33d; }
+  .sample .txt { position: absolute; left: 2.5%; top: 28%; width: 95%; height: 68%; line-height: 1.5; white-space: pre-wrap; }
+  .guide { position: absolute; border: 2px dashed; pointer-events: none; font: 600 16px/1 system-ui, sans-serif; padding: 4px 6px; display: flex; align-items: flex-end; justify-content: flex-end; }
+  .guide.spk { left: 2.5%; top: 6.5%; width: 34%; height: 12%; border-color: #4aa8ff; color: #4aa8ff; }
+  .guide.txt { left: 2.5%; top: 28%; width: 95%; height: 68%; border-color: #3ccf6e; color: #3ccf6e; }
+  .guide.btn { right: 0; top: 0; width: 9.4%; height: 27%; border-color: #ff6a55; color: #ff6a55; background: repeating-linear-gradient(45deg, rgba(255,106,85,.18) 0 8px, transparent 8px 16px); }
+  body.noguide .guide { display: none; }
+  body.preview { min-height: 100vh; padding: 24px; background: #1b1a20; color: #ecebf2; font: 14px/1.7 var(--serif); }
+  .ui h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: .3em; }
+  .ui h2 { margin: 24px 0 10px; font-size: 13px; letter-spacing: .3em; color: #9d9aae; font-weight: 400; }
+  .ui p { color: #9d9aae; font-size: 13px; }
+  .ui code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; color: #ecebf2; }
+  .ui button { font: inherit; color: inherit; background: transparent; border: 1px solid #3b3946; border-radius: 6px; padding: 4px 10px; cursor: pointer; margin: 0 4px 4px 0; }
+  .ui button.on { background: #c8322b; border-color: #c8322b; }
+  .board { position: relative; width: 100%; overflow: hidden; border-radius: 6px; background: repeating-conic-gradient(#3a3846 0 25%, #2c2a36 0 50%) 0 0 / 24px 24px; }
+  table { border-collapse: collapse; font-size: 13px; } td, th { border: 1px solid #3b3946; padding: 4px 10px; text-align: left; } th { color: #9d9aae; font-weight: 400; }
+</style>
+</head>
+<body>
+<div class="ui">
+  <h1>对话框底图</h1>
+  <p>棋盘格 = 透明区域。蓝框 = 名字区，绿框 = 正文区，红斜线 = 跳过 / 关闭按钮区（保持安静）。名字与正文之间、按钮左侧的上沿带是唯一"可以热闹"的装饰带。</p>
+  <div id="pick"></div>
+  <p><label><input type="checkbox" id="g" checked> 参考线</label>　<label><input type="checkbox" id="smp" checked> 示例文字</label></p>
+</div>
+<div class="ui board" id="board"></div>
+<div id="art">
+  <svg id="svg"></svg>
+  <div class="guide spk">名字</div><div class="guide txt">正文</div><div class="guide btn">按钮</div>
+  <div class="sample"><div class="spk">旅人</div><div class="txt">"这条路的尽头，据说有一座没有名字的车站。"
+雾气从脚下漫上来，远处传来了汽笛声。</div></div>
+</div>
+<div class="ui"><h2>SealChat 设置（小剧场外观 → 对话框）</h2><div id="settings"></div></div>
+<script>
+const CONFIG = {
+  theme: 'ink',
+  frame: 'scroll',
+  seal: '幕',          // 上沿带右侧的印章字；空串不显示
+  serial: 'No.0021',   // ticket 边框的票号
+  width: 1920, height: 336
+}
+const THEMES = {   // 与 frame.html 一致；dark = 底色为深色
+  ink:     { bg: '#efe9dc', bg2: '#ddd3bf', ink: '#141414', line: '#141414', accent: '#3c64b4', dark: false },
+  taisho:  { bg: '#3a2b26', bg2: '#1d1513', ink: '#efe2c8', line: '#d8c4a0', accent: '#c23a2c', dark: true },
+  cosmic:  { bg: '#0d1226', bg2: '#020308', ink: '#eef2fb', line: '#c9d4ec', accent: '#5b7bff', dark: true },
+  washi:   { bg: '#ead9d5', bg2: '#d7c0bb', ink: '#7a453c', line: '#a0675b', accent: '#b34a3c', dark: false },
+  classic: { bg: '#2a2321', bg2: '#141010', ink: '#e7d6ae', line: '#bfa77a', accent: '#d8433b', dark: true },
+  school:  { bg: '#fbefe0', bg2: '#f1c9a8', ink: '#2c2238', line: '#3a2e48', accent: '#e0493f', dark: false }
+}
+const qs = new URLSearchParams(location.search)
+for (const k of ['theme', 'frame', 'seal', 'serial']) if (qs.has(k)) CONFIG[k] = qs.get(k)
+const W = +qs.get('w') || CONFIG.width, H = +qs.get('h') || CONFIG.height
+const MODE = qs.get('mode') || 'preview'
+document.body.className = MODE
+const th = THEMES[CONFIG.theme] || THEMES.ink
+const $ = id => document.getElementById(id)
+
+/* ---------- 几何（SealChat 默认对话框布局，按画布比例换算） ---------- */
+const SPK = { x: W * .025, y: H * .065, w: W * .34, h: H * .12 }   // 名字区
+const TXT = { x: W * .025, y: H * .28, w: W * .95, h: H * .68 }    // 正文区
+const BTN = { w: W * .094, h: H * .27 }                             // 右上角按钮区
+const P = { x: 10, y: 12, w: W - 20, h: H - 24 }                    // 面板
+const N = { x: SPK.x - 18, y: Math.max(4, SPK.y - 16), w: Math.min(W * .26, 520), h: SPK.h + 30 }   // 名札
+const BAND = { x0: N.x + N.w + 40, x1: W - BTN.w - 40, y: (P.y + TXT.y) / 2 }                        // 上沿装饰带
+const plateFill = th.dark ? th.bg2 : th.ink, plateLine = th.dark ? th.line : th.bg
+const textColor = CONFIG.frame === 'board' || CONFIG.frame === 'screen' ? '#F4F4F5' : th.ink
+
+/* ---------- 绘制 ---------- */
+const r = (x, y, w, h, a = '') => `<rect x="${x}" y="${y}" width="${w}" height="${h}" ${a}/>`
+const panelFill = CONFIG.frame === 'screen' ? 'url(#scr)' : 'url(#paper)'
+function ticketMask () {   // 票据：上下齿孔 + 左右半圆缺口，用遮罩挖空（只作用于面板，不挖名札）
+  let holes = ''; for (let x = P.x + 40; x < P.x + P.w - 30; x += 30) holes += `<circle cx="${x}" cy="${P.y}" r="6"/><circle cx="${x}" cy="${P.y + P.h}" r="6"/>`
+  return `<mask id="mk" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#fff"/><g fill="#000">${holes}<circle cx="${P.x}" cy="${H / 2}" r="22"/><circle cx="${P.x + P.w}" cy="${H / 2}" r="22"/></g></mask>`
+}
+const corners = (fn) => [[P.x, P.y, 1, 1], [P.x + P.w, P.y, -1, 1], [P.x, P.y + P.h, 1, -1], [P.x + P.w, P.y + P.h, -1, -1]].map(fn).join('')
+const FRAMES = {
+  scroll: () => r(P.x + 24, P.y + 8, P.w - 48, P.h - 16, `fill="none" stroke="${th.line}" stroke-width="2"`) + r(P.x + 34, P.y + 16, P.w - 68, P.h - 32, `fill="none" stroke="${th.line}" stroke-width="1" opacity=".5"`)
+    + [P.x - 2, P.x + P.w - 16].map(x => r(x, 2, 18, H - 4, `rx="9" fill="${th.line}"`) + [0, H - 14].map(y => r(x - 3, y, 24, 14, `rx="4" fill="${th.accent}"`)).join('')).join(''),
+  ticket: () => r(P.x + 14, P.y + 12, P.w - 28, P.h - 24, `fill="none" stroke="${th.line}" stroke-width="2.4"`)
+    + `<text x="${BAND.x1 - (CONFIG.seal ? 80 : 0)}" y="${BAND.y + 7}" text-anchor="end" font-size="20" letter-spacing="4" fill="${th.line}">✂ ${CONFIG.serial}</text>`
+    + `<text x="${BAND.x0}" y="${BAND.y + 7}" font-size="18" letter-spacing="8" fill="${th.accent}">ADMIT ONE</text>`
+    + `<line x1="${BAND.x0}" y1="${BAND.y + 22}" x2="${BAND.x1 - (CONFIG.seal ? 80 : 0)}" y2="${BAND.y + 22}" stroke="${th.line}" stroke-width="1.4" stroke-dasharray="8 8" opacity=".6"/>`,
+  screen: () => r(P.x + 8, P.y + 8, P.w - 16, P.h - 16, `fill="none" stroke="${th.line}" stroke-width="1.4"`) + r(P.x + 16, P.y + 16, P.w - 32, P.h - 32, `fill="none" stroke="${th.line}" stroke-width=".8" opacity=".6"`)
+    + corners(([cx, cy, sx, sy]) => `<path d="M${cx + sx * 8} ${cy + sy * 48} V${cy + sy * 8} H${cx + sx * 48}" fill="none" stroke="${th.line}" stroke-width="4"/>` + r(cx + sx * 8 - 6, cy + sy * 8 - 6, 12, 12, `fill="${th.bg2}" stroke="${th.line}" stroke-width="1.5"`))
+    + Array.from({ length: 5 }, (_, i) => { const x = BAND.x0 + (BAND.x1 - BAND.x0) * (i + .5) / 5, l = 18 + (i * 37) % 30; return `<line x1="${x}" y1="${P.y}" x2="${x}" y2="${P.y + l}" stroke="${th.line}"/><path d="M${x} ${P.y + l - 2} l4 8 9 1 -7 6 2 9 -8 -5 -8 5 2 -9 -7 -6 9 -1z" fill="none" stroke="${th.line}" stroke-width="1.2"/>` }).join(''),
+  lattice: () => r(P.x + 4, P.y + 4, P.w - 8, P.h - 8, `fill="none" stroke="${th.line}" stroke-width="3"`) + r(P.x + 18, P.y + 18, P.w - 36, P.h - 36, `fill="none" stroke="${th.line}" stroke-width="1.5"`)
+    + corners(([cx, cy, sx, sy]) => [[0, 0, 56, 0, 56, 18, 18, 18, 18, 56, 0, 56], [28, 28, 42, 28, 42, 42, 28, 42]].map(pts => `<polygon points="${pts.reduce((a, v, i) => a + (i % 2 ? `${cy + sy * (v + 4)} ` : `${cx + sx * (v + 4)},`), '')}" fill="none" stroke="${th.line}" stroke-width="2"/>`).join('') + r(cx + (sx > 0 ? 10 : -20), cy + (sy > 0 ? 10 : -20), 10, 10, `fill="${th.accent}"`)),
+  board: () => `<rect x="${P.x + 16}" y="${P.y + 16}" width="${P.w - 32}" height="${P.h - 34}" rx="3" fill="url(#slate)"/><rect x="${P.x + 16}" y="${P.y + 16}" width="${P.w - 32}" height="${P.h - 34}" fill="url(#vig)"/>`
+    + `<path d="M${P.x + 10} ${P.y + P.h - 10} H${P.x + P.w - 10} V${P.y + P.h} Q${P.x + P.w - 10} ${H - 4} ${P.x + P.w - 16} ${H - 4} H${P.x + 16} Q${P.x + 10} ${H - 4} ${P.x + 10} ${P.y + P.h} Z" fill="#5a361f"/>`
+    + [['#f6f2e6', 64], ['#ffb7c5', 44], ['#fff1a8', 52]].reduce((a, [c, w], i) => [a[0] + r(a[1], P.y + P.h - 17, w, 7, `rx="3.5" fill="${c}"`), a[1] + w + 14], ['', W * .66])[0]
+}
+
+$('art').style.cssText += `width:${W}px;height:${H}px`
+const svg = $('svg'); svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+svg.innerHTML = `<defs>
+  <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${th.bg}"/><stop offset="1" stop-color="${th.bg2}"/></linearGradient>
+  <linearGradient id="scr" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${th.dark ? th.bg : '#1a1a20'}" stop-opacity=".94"/><stop offset="1" stop-color="${th.dark ? th.bg2 : '#0c0c10'}" stop-opacity=".96"/></linearGradient>
+  <linearGradient id="wood" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a8734d"/><stop offset=".4" stop-color="#7e4f33"/><stop offset=".7" stop-color="#96623f"/><stop offset="1" stop-color="#6f4329"/></linearGradient>
+  <radialGradient id="slate" cx=".3" cy=".3" r=".9"><stop offset="0" stop-color="#36564a"/><stop offset=".55" stop-color="#2c463b"/><stop offset="1" stop-color="#223a30"/></radialGradient>
+  <radialGradient id="vig" cx=".5" cy=".5" r=".75"><stop offset=".55" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".4"/></radialGradient>
+  <clipPath id="cp"><rect x="${P.x}" y="${P.y}" width="${P.w}" height="${P.h}" rx="6"/></clipPath>
+  <filter id="sh" x="-5%" y="-30%" width="110%" height="160%"><feGaussianBlur stdDeviation="4"/></filter>
+  <filter id="gn"><feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="3" stitchTiles="stitch"/><feColorMatrix values="0 0 0 0 .1  0 0 0 0 .1  0 0 0 0 .1  0 0 0 .7 0"/></filter>
+</defs>
+${CONFIG.frame === 'ticket' ? ticketMask() : ''}
+<g${CONFIG.frame === 'ticket' ? ' mask="url(#mk)"' : ''}>
+${r(P.x + 4, P.y + 5, P.w - 8, P.h, `rx="6" fill="#000" opacity=".35" filter="url(#sh)"`)}
+${r(P.x, P.y, P.w, P.h, `rx="6" fill="${CONFIG.frame === 'board' ? 'url(#wood)' : panelFill}"`)}
+${r(P.x, P.y, P.w, P.h, `fill="#000" filter="url(#gn)" clip-path="url(#cp)" opacity="${th.dark ? .18 : .12}" style="mix-blend-mode:multiply"`)}
+${(FRAMES[CONFIG.frame] || FRAMES.scroll)()}
+</g>
+${r(N.x + 3, N.y + 5, N.w, N.h, `rx="4" fill="#000" opacity=".4" filter="url(#sh)"`)}
+${r(N.x, N.y, N.w, N.h, `rx="4" fill="${plateFill}"`)}
+${r(N.x + 6, N.y + 6, N.w - 12, N.h - 12, `rx="2" fill="none" stroke="${plateLine}" stroke-opacity=".55" stroke-width="1.4"`)}
+${r(N.x + N.w - 4, N.y + 10, 8, N.h - 20, `fill="${th.accent}"`)}
+${CONFIG.seal ? `<g transform="translate(${BAND.x1 - 30} ${BAND.y}) rotate(-7)"><rect x="-27" y="-27" width="54" height="54" rx="6" fill="${th.accent}"/><rect x="-23" y="-23" width="46" height="46" rx="4" fill="none" stroke="${th.bg}" stroke-opacity=".7" stroke-width="1.5"/><text y="13" text-anchor="middle" font-size="34" fill="${th.dark ? th.ink : th.bg}" style="font-family:var(--brush)">${CONFIG.seal}</text></g>` : ''}`
+document.querySelector('.sample .txt').style.color = textColor
+
+/* ---------- 模式 ---------- */
+function fitStage () {   // SealChat：底图 cover 铺满对话框；组合层字号 clamp(12px, .833cqw, 16px)，正文 ×1.2，名字 = 名字区高 ×0.85
+  const vw = innerWidth, vh = innerHeight, k = Math.max(vw / W, vh / H)
+  $('art').style.transform = `translate(-50%,-50%) scale(${k})`
+  const smp = document.querySelector('.sample')
+  Object.assign(smp.style, { inset: 'auto', left: `${(W - vw / k) / 2}px`, top: `${(H - vh / k) / 2}px`, width: `${vw / k}px`, height: `${vh / k}px` })
+  smp.querySelector('.txt').style.fontSize = `${Math.min(16, Math.max(12, vw / .9 * .00833)) * 1.2 / k}px`
+  smp.querySelector('.spk').style.fontSize = `${vh * .12 * .85 / k}px`
+}
+if (MODE === 'stage') { addEventListener('resize', fitStage); fitStage() }
+if (MODE === 'preview') {
+  const b = $('board'); b.style.aspectRatio = `${W} / ${H}`; b.appendChild($('art'))
+  const fit = () => { $('art').style.transform = `scale(${b.clientWidth / W})` }
+  new ResizeObserver(fit).observe(b); fit()
+  document.querySelector('.sample .txt').style.fontSize = `${16 * 1.2 / .9 * W / 1920}px`
+  document.querySelector('.sample .spk').style.fontSize = `${SPK.h * .85}px`
+  const link = (k, v) => { const q = new URLSearchParams(location.search); q.set(k, v); return '?' + q }
+  $('pick').innerHTML = `<p>${Object.keys(THEMES).map(t => `<button class="${t === CONFIG.theme ? 'on' : ''}" onclick="location.search='${link('theme', t)}'">${t}</button>`).join('')}</p><p>${Object.keys(FRAMES).map(f => `<button class="${f === CONFIG.frame ? 'on' : ''}" onclick="location.search='${link('frame', f)}'">${f}</button>`).join('')}</p>`
+  $('settings').innerHTML = `<table><tr><th>项</th><th>值</th></tr>
+    <tr><td>对话框图片</td><td>导出的 PNG（${W}×${H}）</td></tr>
+    <tr><td>对话框位置 / 名字区 / 正文区</td><td>${W === 1920 && H === 336 ? '保持默认' : '按导出时的宽高比设置对话框宽高'}</td></tr>
+    <tr><td>正文颜色</td><td><code>${textColor.toUpperCase()}</code></td></tr>
+    <tr><td>导出命令</td><td><code>python3 scripts/export_png.py templates/dialogue-box.html out.png --size ${W}x${H} --query "theme=${CONFIG.theme}&amp;frame=${CONFIG.frame}"</code></td></tr></table>`
+  $('g').onchange = e => document.body.classList.toggle('noguide', !e.target.checked)
+  $('smp').onchange = e => { document.querySelector('.sample').style.display = e.target.checked ? '' : 'none' }
+}
+</script>
+</body>
+</html>
