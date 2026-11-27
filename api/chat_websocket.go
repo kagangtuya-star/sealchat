@@ -1776,6 +1776,12 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 					case "message.reorder.log":
 						apiWrap(ctx, msg, apiLogMessageReorder)
 						solved = true
+					case "log.presence.update":
+						apiWrap(ctx, msg, apiLogPresenceUpdate)
+						solved = true
+					case "log.presence.leave":
+						apiWrap(ctx, msg, apiLogPresenceLeave)
+						solved = true
 					case "message.reorder.batch":
 						apiWrap(ctx, msg, apiMessageReorderBatch)
 						solved = true
@@ -2019,6 +2025,7 @@ func websocketWorks(app *fiber.App, webUrl string, outboundQueueSize int) {
 			worldPresentationControllers.set(curConnInfo.ChannelId, c, false)
 			curConnInfo.closeTheaterQueue()
 		}
+		dropLogPresence(c)
 		affectedUserIDs := map[string]struct{}{}
 		affectedChannelIDs := map[string]struct{}{}
 		if curConnInfo != nil && curConnInfo.ChannelId != "" {

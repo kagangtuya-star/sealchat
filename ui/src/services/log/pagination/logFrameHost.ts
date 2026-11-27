@@ -101,6 +101,8 @@ export interface FrameProofView {
 
 export interface FrameAsset { token: string; data: ArrayBuffer | null; mime: string }
 export interface FrameRelocation { sourceMessageIds: string[] }
+/** 协作标记：其他设计者在某个节点上的光标或编辑锁（设计态提示层）。 */
+export interface FrameCollabMark { nodeId: string; label: string; color: string; editing: boolean }
 export interface FramePrintRange { fromPage: number; toPage: number }
 
 export interface LayoutRequest {

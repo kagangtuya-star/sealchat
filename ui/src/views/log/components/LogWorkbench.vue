@@ -5,11 +5,14 @@ import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted
 import { useDialog, useMessage, type DropdownOption } from 'naive-ui';
 import { useMediaQuery } from '@vueuse/core';
 import { useRouter } from 'vue-router';
+import UserAvatar from '@/components/avatar.vue';
 import { chatEvent, useChatStore } from '@/stores/chat';
+import { useUserStore } from '@/stores/user';
 import {
   AlertTriangle,
   ArrowLeft,
   Book2,
+  Bookmark,
   Components,
   Download,
   Eye,
@@ -52,16 +55,19 @@ import {
   designStyleFromPackage,
   type DesignNodeCacheEntry,
 } from '@/services/log/logRenderer';
-import type { FrameDocument, FrameEvent, FrameLayoutResult, FramePrintRange, FrameProofNode, FrameProofView } from '@/services/log/pagination/logFrameHost';
+import type { FrameAnchor, FrameCollabMark, FrameDocument, FrameEvent, FrameLayoutResult, FramePrintRange, FrameProofNode, FrameProofView } from '@/services/log/pagination/logFrameHost';
 import { updateDraftImageWidth } from '@/services/log/logImageLayout';
 import { buildTemplateLibrary, messageTemplateIds } from '@/services/log/logTemplateCompiler';
-import type { LogAnchor, LogDesignMessage, LogElement, LogElementType, LogProjectContext, LogProtocolMessage, LogSection, LogStylePackage } from '@/types/log';
+import type { LogAnchor, LogBookmark, LogBookmarkVisibility, LogDesignMessage, LogElement, LogElementType, LogPresence, LogProjectContext, LogProtocolMessage, LogSection, LogStylePackage } from '@/types/log';
 import { LOG_ELEMENT_TYPES } from '@/types/log';
 import { useLogDraft } from '../composables/useLogDraft';
 import { useLogMessageWindow } from '../composables/useLogMessageWindow';
 import { useLogAssets } from '../composables/useLogAssets';
 import { useLogAssetLibrary } from '../composables/useLogAssetLibrary';
 import { useLogSelection } from '../composables/useLogSelection';
+import { presenceColor, useLogCollab } from '../composables/useLogCollab';
+import { useLogBookmarks } from '../composables/useLogBookmarks';
+import { readResumePosition, writeResumePosition } from '../logResumePosition';
 import { createElement, downloadJson, elementAvailability, insertElement, nextOrderAt, rebindStyle, sameAnchor, setMessageTemplateOverrides } from '../logDraftOps';
 import type { StyleStudioPreview, StyleStudioRequest } from '../logStyleWorkingCopy';
 import { useLogStyleLibrary } from '../composables/useLogStyleLibrary';
@@ -81,6 +87,8 @@ import LogStylePanel from './LogStylePanel.vue';
 import LogStyleStudio from './LogStyleStudio.vue';
 import LogPublishPanel from './LogPublishPanel.vue';
 import LogAssetsPanel from './LogAssetsPanel.vue';
+import LogBookmarksPanel from './LogBookmarksPanel.vue';
+import LogBookmarkDialog from './LogBookmarkDialog.vue';
 import LogInsertElementDialog from './LogInsertElementDialog.vue';
 import LogStandardExportDialog from './LogStandardExportDialog.vue';
 import LogPdfExportDialog from './LogPdfExportDialog.vue';
@@ -100,7 +108,14 @@ const narrow = useMediaQuery('(max-width: 900px)');
 
 const projectId = computed(() => props.context.projectId);
 const caps = computed(() => props.context.capabilities);
-const draftCtl = useLogDraft(projectId, { draftVersion: props.context.draftVersion, draft: props.context.draft });
+const draftCtl = useLogDraft(projectId, { draftVersion: props.context.draftVersion, draft: props.context.draft }, {
+  fetchLatest: () => resolveLogLayout(props.slug),
+  // 冲突后合并时不知道对方改了什么（可能包括排除集），保守地重载消息窗口。
+  onRebased: () => {
+    commitQuerySection();
+    reloadMessagesThroughCurrentVersion();
+  },
+});
 const draft = draftCtl.draft;
 
 const checkSourceRange = (id: string) => {
@@ -174,11 +189,25 @@ watch(sections, (list) => {
 });
 
 const win = useLogMessageWindow(projectId, querySection);
-const onDraftChanged = async (event: { projectId: string; draftVersion: number }, known?: LogProjectContext) => {
-  if (event.projectId !== projectId.value) return;
-  if (await draftCtl.invalidate(event.draftVersion, () => known ? Promise.resolve(known) : resolveLogLayout(props.slug))) {
-    commitQuerySection();
-    win.scheduleReload(0, true);
+// 采纳草稿版本不代表已刷新消息窗口：排除集通知可能比更新的纯草稿通知晚到。
+let messageReloadedThrough = draftCtl.draftVersion.value;
+let pendingMessageReloadVersion = 0;
+let receivingDraftChanges = true;
+const reloadMessagesThroughCurrentVersion = () => {
+  messageReloadedThrough = draftCtl.draftVersion.value;
+  if (pendingMessageReloadVersion <= messageReloadedThrough) pendingMessageReloadVersion = 0;
+  win.scheduleReload(0, true);
+};
+const onDraftChanged = async (event: { projectId: string; draftVersion: number; reason?: string }, known?: LogProjectContext) => {
+  if (!receivingDraftChanges || event.projectId !== projectId.value || !Number.isSafeInteger(event.draftVersion)) return;
+  if (event.reason !== 'draft' && event.draftVersion > messageReloadedThrough) {
+    pendingMessageReloadVersion = Math.max(pendingMessageReloadVersion, event.draftVersion);
+  }
+  const adopted = await draftCtl.invalidate(event.draftVersion, () => known ? Promise.resolve(known) : resolveLogLayout(props.slug));
+  if (!receivingDraftChanges || event.projectId !== projectId.value) return;
+  if (adopted) commitQuerySection();
+  if (pendingMessageReloadVersion && draftCtl.draftVersion.value >= pendingMessageReloadVersion) {
+    reloadMessagesThroughCurrentVersion();
   }
 };
 const probeDraft = async () => {
@@ -197,6 +226,7 @@ onMounted(() => {
   else void chat.ensureConnectionReady({ timeoutMs: 10000 }).catch(() => toast.warning('实时连接不可用，重新连接后将核对工程版本'));
 });
 onBeforeUnmount(() => {
+  receivingDraftChanges = false;
   chatEvent.off('connected', probeDraft);
   chatEvent.off('log-project-draft-changed', onDraftChanged);
 });
@@ -438,13 +468,14 @@ const applyMessageTemplate = (templateId: string) => {
 };
 
 // ---- 面板 ----
-type PanelTab = 'bulk' | 'elements' | 'page' | 'style' | 'assets' | 'publish' | 'proofread';
+type PanelTab = 'bulk' | 'elements' | 'page' | 'style' | 'assets' | 'bookmarks' | 'publish' | 'proofread';
 const panelItems: Array<{ key: PanelTab; label: string; hint: string; icon: Component }> = [
   { key: 'elements', label: '元素', hint: '插入与编辑 LOG 元素', icon: Components },
   { key: 'page', label: '页面', hint: '纸张、边距、字体与页眉页脚', icon: PageBreak },
   { key: 'style', label: '样式', hint: '样式包、设计变量与模板', icon: Palette },
   { key: 'bulk', label: '批量', hint: '批量修改历史消息外观', icon: Users },
   { key: 'assets', label: '素材', hint: '当前 LOG 的图片素材与样式资源', icon: Photo },
+  { key: 'bookmarks', label: '书签', hint: '书签与正在协作的设计者', icon: Bookmark },
   { key: 'publish', label: '发布', hint: '发布前检查与发布管理', icon: Rocket },
   { key: 'proofread', label: '校对', hint: '批量标点与 AI 综合校对，仅修改当前 LOG 工程', icon: Writing },
 ];
@@ -458,7 +489,14 @@ const proofreadPanelRef = ref<{
 } | null>(null);
 const proofMarks = shallowRef<FrameProofNode[] | null>(null);
 const proofView = shallowRef<FrameProofView | null>(null);
-const pendingProofReveal = shallowRef<{ key: string | null; messageId: string; sectionId: string; signal?: AbortSignal } | null>(null);
+/**
+ * 跨片段定位请求。messageId 决定需要加载到哪条消息（空表示无需按消息加载）；nodeId 是最终滚动目标（缺省同 messageId）。
+ * select：定位后选中；resumeAnchor：静默恢复视口位置；untilComplete：目标只在片段完整加载后出现。
+ */
+const pendingProofReveal = shallowRef<{
+  key: string | null; messageId: string; sectionId: string; signal?: AbortSignal;
+  nodeId?: string; select?: boolean; resumeAnchor?: FrameAnchor; untilComplete?: boolean;
+} | null>(null);
 /** 专注审阅：收起设计面板，为页边批注留出空间；退出时恢复原来的面板状态。 */
 const proofFocus = ref(false);
 let proofFocusRestore: boolean | null = null;
@@ -564,7 +602,29 @@ const editorPosition = computed(() => {
   const index = ids.indexOf(editorMessageId.value);
   return index < 0 ? '' : `${fragmentHint.value ? '当前片段 · ' : ''}第 ${index + 1} 条 / ${win.complete.value ? '共' : '当前已加载'} ${ids.length} 条`;
 });
-const openEditor = (messageId: string, tab: 'content' | 'identity' | 'appearance') => {
+const openEditor = async (messageId: string, tab: 'content' | 'identity' | 'appearance') => {
+  if (editorShow.value && editorMessageId.value === messageId) {
+    editorTab.value = tab;
+    return;
+  }
+  // 编辑锁：同一条消息同时只允许一位设计者打开编辑器（服务端仲裁）。
+  if (collabSupported.value) {
+    try {
+      const lock = await collab.acquire(messageId);
+      if (!lock.granted) {
+        if (lock.cancelled) return;
+        toast.warning(`${lock.holderName} 正在编辑这条消息，请稍后再试`);
+        return;
+      }
+    } catch {
+      toast.error('无法取得编辑锁：实时连接不可用，请稍后重试');
+      return;
+    }
+    if (!win.byId(messageId)) {
+      collab.release(messageId);
+      return;
+    }
+  }
   editorMessageId.value = messageId;
   editorTab.value = tab;
   editorShow.value = true;
@@ -589,6 +649,60 @@ watch(editorItem, (item) => {
     toast.warning('该消息已不在当前范围内');
   }
 });
+
+// ---- 协作：在线状态、编辑锁与画布标记 ----
+const userStore = useUserStore();
+const collabSupported = computed(() => caps.value.supportsCollaboration === true);
+const collab = useLogCollab({
+  projectId,
+  enabled: () => collabSupported.value,
+  cursor: () => {
+    const picked = selection.messageIds.value;
+    const messageId = editorShow.value ? editorMessageId.value : !selection.multi.value && picked.length === 1 ? picked[0] : '';
+    return { sectionId: querySection.value?.id || '', messageId };
+  },
+  onLockLost: (messageId, holderName) => {
+    if (!editorShow.value || editorMessageId.value !== messageId) return;
+    editorShow.value = false;
+    toast.warning(`编辑锁已超时，${holderName} 已开始编辑这条消息；编辑器已关闭`);
+  },
+});
+watch(editorShow, (open) => {
+  if (!open) collab.release();
+});
+const presenceName = (p: LogPresence) => (p.userId === userStore.info.id ? `你（其他窗口）` : p.name || '设计者');
+const collabMarks = computed<FrameCollabMark[]>(() => {
+  const sec = querySection.value?.id;
+  if (!sec || previewPublish.value) return [];
+  return collab.others.value
+    .filter((p) => p.sectionId === sec && (p.editingMessageId || p.messageId))
+    .map((p) => ({
+      nodeId: (p.editingMessageId || p.messageId)!,
+      label: p.editingMessageId ? `${presenceName(p)} 正在编辑` : presenceName(p),
+      color: presenceColor(p.userId),
+      editing: !!p.editingMessageId,
+    }));
+});
+/** 工具栏头像：每位用户只显示一次。 */
+const collabPeers = computed(() => {
+  const seen = new Map<string, LogPresence>();
+  for (const p of collab.others.value) if (!seen.has(p.userId)) seen.set(p.userId, p);
+  return [...seen.values()];
+});
+const sectionLocation = (id: string | undefined): string | null => {
+  if (!id) return null;
+  const index = chapters.value.findIndex((c) => c.sections.some((s) => s.id === id));
+  if (index < 0) return null;
+  const chapter = chapters.value[index];
+  const section = chapter.sections.find((s) => s.id === id)!;
+  return chapter.sections.length > 1 ? `${chapterTitle(chapter, index)} · ${sectionLabel(section, sourceChannelName)}` : chapterTitle(chapter, index);
+};
+const describePresence = (p: LogPresence) => {
+  const where = sectionLocation(p.sectionId) || '未选择章节';
+  const what = p.activity === 'editing' ? '正在编辑消息' : p.activity === 'selecting' ? '选中了消息' : '浏览中';
+  return `${where} · ${what}`;
+};
+const collabTitle = computed(() => collab.others.value.map((p) => `${presenceName(p)}：${describePresence(p)}`).join('\n'));
 
 // ---- 原消息命令 ----
 const busy = ref(false);
@@ -921,6 +1035,7 @@ const ctxOptions = computed<DropdownOption[]>(() => {
     { type: 'divider', key: 'd1' },
     { key: 'edit', label: '编辑正文', disabled: !item.capabilities.edit },
     { key: 'relocate', label: '重定位…', disabled: busy.value || !item.capabilities.reorder },
+    ...(collabSupported.value ? [{ key: 'bookmark', label: '添加书签', disabled: bookmarks.busy.value }] : []),
   ];
 });
 const openContextMenu = (nodeId: string, x: number, y: number) => {
@@ -938,6 +1053,7 @@ const onContextSelect = (key: string) => {
     selection.select(id);
     openEditor(id, 'content');
   } else if (key === 'relocate') startRelocate([id]);
+  else if (key === 'bookmark') void addBookmark(id);
 };
 
 const removeSelected = () => {
@@ -1112,6 +1228,9 @@ const onFrameEvent = (event: FrameEvent) => {
     case 'scrollMiss':
       if (win.nextCursor.value) toast.info('目标位置尚未加载，请先加载更多消息');
       break;
+    case 'anchor':
+      if (frameComposition === composition.value && laidOutRevision === frameRevision) onViewportAnchor(event.anchor);
+      break;
     default:
       break;
   }
@@ -1138,14 +1257,16 @@ const locate = (nodeId: string) => {
 /** 预览和批注都已准备好时才定位，避免切片段后把请求发送给旧文档。 */
 const finishProofReveal = () => {
   const target = pendingProofReveal.value;
-  if (!target || target.signal?.aborted || querySection.value?.id !== target.sectionId || !win.byId(target.messageId)) return;
-  if (target.signal && (frameComposition !== composition.value || laidOutRevision !== frameRevision)) return;
-  if (!layoutInfo.value?.map[target.messageId]?.length) return;
+  if (!target || target.signal?.aborted || querySection.value?.id !== target.sectionId || (target.messageId && !win.byId(target.messageId))) return;
+  if ((target.signal || target.nodeId) && (frameComposition !== composition.value || laidOutRevision !== frameRevision)) return;
+  const nodeId = target.nodeId || target.messageId;
+  if (!layoutInfo.value?.map[nodeId]?.length) return;
   if (target.key) {
     if (!proofMarks.value?.some((n) => n.nodeId === target.messageId && n.items.some((i) => i.key === target.key))) return;
     previewRef.value?.proofReveal(target.key);
-  } else if (target.signal) locate(target.messageId);
-  else previewRef.value?.scrollTo(target.messageId, true);
+  } else if (target.signal || target.select) locate(nodeId);
+  else if (target.resumeAnchor) previewRef.value?.restoreViewport(target.resumeAnchor);
+  else previewRef.value?.scrollTo(nodeId, true);
   pendingProofReveal.value = null;
 };
 /** 导航目标未加载时，沿用现有分页接口，且每次只追加一页。 */
@@ -1155,20 +1276,20 @@ const continueProofReveal = () => {
   if (target.signal?.aborted || sectionId.value !== target.sectionId) { pendingProofReveal.value = null; return; }
   if (querySection.value?.id !== target.sectionId) {
     if (draftCtl.status.value === 'error' || draftCtl.status.value === 'conflict') {
-      toast.error('切换来源片段失败，请先解决草稿保存错误');
+      if (!target.resumeAnchor) toast.error('切换来源片段失败，请先解决草稿保存错误');
       pendingProofReveal.value = null;
     }
     return;
   }
   if (win.error.value) {
-    toast.error(`加载定位目标失败：${win.error.value}`);
+    if (!target.resumeAnchor) toast.error(`加载定位目标失败：${win.error.value}`);
     pendingProofReveal.value = null;
     return;
   }
   if (win.loadedSectionId.value !== target.sectionId || win.loading.value) return;
-  if (win.byId(target.messageId)) { finishProofReveal(); return; }
+  if (target.messageId ? win.byId(target.messageId) : !target.untilComplete || win.complete.value) { finishProofReveal(); return; }
   if (win.nextCursor.value) { void win.loadMore(); return; }
-  toast.warning('来源片段中没有找到该消息（可能已删除或排除）');
+  if (!target.resumeAnchor) toast.warning(target.messageId ? '来源片段中没有找到该消息（可能已删除或排除）' : '没有找到目标位置');
   pendingProofReveal.value = null;
 };
 watch([sectionId, () => querySection.value?.id, win.items, win.loading, win.nextCursor, win.error, win.loadedSectionId, () => draftCtl.status.value, proofMarks], continueProofReveal, { flush: 'post' });
@@ -1197,6 +1318,32 @@ const locateProofMessage = (messageId: string, targetSectionId: string, signal?:
   continueProofReveal();
 };
 
+/**
+ * 定位到任意节点（消息或 `el-<元素 id>`），按需切换来源片段并逐页加载。
+ * 书签与协作者跳转使用 select；恢复上次位置保留分页片段和视口偏移。
+ */
+const revealNode = (targetSectionId: string, nodeId: string, mode: { select?: boolean; resumeAnchor?: FrameAnchor } = {}) => {
+  if (!sections.value.some((s) => s.id === targetSectionId)) {
+    if (!mode.resumeAnchor) toast.warning('目标来源片段已不可用');
+    return;
+  }
+  let messageId = nodeId;
+  let untilComplete = false;
+  if (nodeId.startsWith('el-')) {
+    const element = draft.value.elements.find((e) => `el-${e.id}` === nodeId);
+    if (!element || element.anchor.sectionId !== targetSectionId) {
+      if (!mode.resumeAnchor) toast.warning('目标元素已不存在，已切换到所在章节');
+      sectionId.value = targetSectionId;
+      return;
+    }
+    messageId = element.anchor.kind === 'message' ? element.anchor.messageId : '';
+    untilComplete = element.anchor.kind === 'sectionEnd';
+  }
+  pendingProofReveal.value = { key: null, messageId, nodeId, sectionId: targetSectionId, untilComplete, ...mode };
+  if (sectionId.value !== targetSectionId) sectionId.value = targetSectionId;
+  continueProofReveal();
+};
+
 const locateFindMessage = (messageId: string, targetSectionId: string, signal: AbortSignal) => {
   findingInAnotherSection = true;
   try {
@@ -1205,6 +1352,98 @@ const locateFindMessage = (messageId: string, targetSectionId: string, signal: A
     findingInAnotherSection = false;
   }
 };
+
+// ---- 书签与上次位置 ----
+const bookmarks = useLogBookmarks(projectId, () => collabSupported.value);
+/** 预览视口顶部的锚点（iframe 排版及滚动时上报）。 */
+const viewportAnchor = shallowRef<(FrameAnchor & { sectionId: string }) | null>(null);
+const nodeSummary = (nodeId: string) => {
+  const node = nodeCache.get(nodeId)?.node;
+  if (node?.kind === 'message') {
+    const text = node.plainText.replace(/\s+/g, ' ').trim();
+    return `${node.speakerName.slice(0, 16) || '未命名角色'}：${text.slice(0, 18) || '（无文字内容）'}${text.length > 18 ? '…' : ''}`;
+  }
+  const element = nodeId.startsWith('el-') ? draft.value.elements.find((e) => `el-${e.id}` === nodeId) : null;
+  if (element) {
+    const text = typeof element.content.text === 'string' ? element.content.text.trim() : '';
+    return `元素：${text.slice(0, 24) || element.type}`;
+  }
+  return '';
+};
+/** 添加书签的目标：单选的节点优先，否则取视口顶部。 */
+const bookmarkTarget = computed(() => {
+  const sec = querySection.value;
+  if (!sec || previewPublish.value) return null;
+  const picked = selection.selected.value;
+  const ids = new Set(orderedIds.value);
+  const anchor = viewportAnchor.value;
+  const viewportNodeId = anchor?.sectionId === sec.id && ids.has(anchor.nodeId) ? anchor.nodeId : '';
+  const nodeId = !selection.multi.value && picked.length === 1 && ids.has(picked[0]) ? picked[0] : viewportNodeId;
+  if (!nodeId) return null;
+  return { sectionId: sec.id, nodeId, selected: nodeId === picked[0], summary: nodeSummary(nodeId) };
+});
+const bookmarkTargetText = computed(() => {
+  const t = bookmarkTarget.value;
+  return t ? `${t.selected ? '选中的' : '视口顶部的'}${t.nodeId.startsWith('el-') ? '元素' : '消息'}「${t.summary || '…'}」` : '';
+});
+const bookmarkCreateTarget = ref<{ projectId: string; sectionId: string; nodeId: string; label: string; location: string } | null>(null);
+watch(projectId, () => { bookmarkCreateTarget.value = null; });
+const addBookmark = (nodeId?: string) => {
+  const sec = querySection.value;
+  const target = nodeId && sec ? { sectionId: sec.id, nodeId, summary: nodeSummary(nodeId) } : bookmarkTarget.value;
+  if (!target || bookmarks.busy.value) return;
+  bookmarkCreateTarget.value = {
+    projectId: projectId.value,
+    sectionId: target.sectionId,
+    nodeId: target.nodeId,
+    label: Array.from(target.summary || sectionLocation(target.sectionId) || '书签').slice(0, 60).join(''),
+    location: sectionLocation(target.sectionId) || '',
+  };
+};
+const createBookmark = async (label: string, visibility: LogBookmarkVisibility) => {
+  const target = bookmarkCreateTarget.value;
+  if (!target || target.projectId !== projectId.value) return;
+  if (await bookmarks.add({ sectionId: target.sectionId, nodeId: target.nodeId, label, visibility })) {
+    if (bookmarkCreateTarget.value === target) bookmarkCreateTarget.value = null;
+    toast.success('已添加书签');
+  } else if (bookmarks.error.value) toast.error(bookmarks.error.value);
+};
+const bookmarkLocation = (b: LogBookmark) => sectionLocation(b.sectionId);
+const jumpToBookmark = (b: LogBookmark) => revealNode(b.sectionId, b.nodeId, { select: true });
+const followPresence = (p: LogPresence) => {
+  if (!p.sectionId) return;
+  const nodeId = p.editingMessageId || p.messageId;
+  if (nodeId) revealNode(p.sectionId, nodeId, { select: true });
+  else if (sections.value.some((s) => s.id === p.sectionId)) sectionId.value = p.sectionId;
+};
+
+// 上次位置：滚动停止后记录视口锚点；进行中的定位（含恢复本身）期间不记录。
+let resumeTimer: ReturnType<typeof setTimeout> | null = null;
+const saveResume = () => {
+  if (resumeTimer) clearTimeout(resumeTimer);
+  resumeTimer = null;
+  const anchor = viewportAnchor.value;
+  if (!anchor || querySection.value?.id !== anchor.sectionId || pendingProofReveal.value || previewPublish.value
+    || !orderedIds.value.includes(anchor.nodeId)) return;
+  writeResumePosition(userStore.info.id, projectId.value, anchor);
+};
+const onViewportAnchor = (anchor: FrameAnchor | null) => {
+  const sectionId = querySection.value?.id;
+  viewportAnchor.value = anchor && sectionId ? { ...anchor, sectionId } : null;
+  if (!viewportAnchor.value || pendingProofReveal.value || previewPublish.value) return;
+  if (resumeTimer) clearTimeout(resumeTimer);
+  resumeTimer = setTimeout(saveResume, 800);
+};
+onBeforeUnmount(() => {
+  if (resumeTimer) saveResume();
+});
+onMounted(() => {
+  const resume = readResumePosition(userStore.info.id, projectId.value);
+  if (resume) {
+    const { sectionId, nodeId, fragmentIndex = 0, offsetWithinViewport = 0 } = resume;
+    revealNode(sectionId, nodeId, { resumeAnchor: { nodeId, fragmentIndex, offsetWithinViewport } });
+  }
+});
 
 // ---- 草稿字段 ----
 const titleModel = computed({
@@ -1375,6 +1614,7 @@ onBeforeUnmount(() => {
         <n-input
           v-model:value="titleModel"
           class="log-wb__title"
+          :title="draft.title"
           size="small"
           :bordered="false"
           :disabled="!caps.editDraft"
@@ -1393,9 +1633,9 @@ onBeforeUnmount(() => {
           placeholder="无章节"
           aria-label="章节"
         />
-        <button type="button" class="log-wb__text-btn" @click="sectionsShow = true">
+        <button type="button" class="log-wb__text-btn log-wb__sources" :title="caps.manageSources ? '章节与来源' : '章节结构'" :aria-label="caps.manageSources ? '章节与来源' : '章节结构'" @click="sectionsShow = true">
           <n-icon :component="Stack2" size="16" />
-          <span>{{ caps.manageSources ? '章节与来源' : '章节结构' }}</span>
+          <span class="log-wb__optional-label">{{ caps.manageSources ? '章节与来源' : '章节结构' }}</span>
         </button>
       </div>
 
@@ -1414,18 +1654,19 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <div class="log-wb__seg" role="radiogroup" aria-label="预览发布效果">
-          <button type="button" role="radio" :aria-checked="!previewPublish" :class="{ 'is-on': !previewPublish }" title="设计视图：显示选择与快捷操作" @click="previewPublish = false">
-            <n-icon :component="Pencil" size="14" /><span>设计</span>
+          <button type="button" role="radio" aria-label="设计视图" :aria-checked="!previewPublish" :class="{ 'is-on': !previewPublish }" title="设计视图：显示选择与快捷操作" @click="previewPublish = false">
+            <n-icon :component="Pencil" size="14" /><span class="log-wb__optional-label">设计</span>
           </button>
           <button
             type="button"
             role="radio"
             :aria-checked="previewPublish"
+            aria-label="发布效果"
             :class="{ 'is-on': previewPublish }"
             :title="currentIsFragment ? '当前片段的发布版式；公开章节会按编排串联全部片段' : '发布效果：公开读者看到的版式'"
             @click="previewPublish = true"
           >
-            <n-icon :component="Eye" size="14" /><span>{{ currentIsFragment ? '片段发布效果' : '发布效果' }}</span>
+            <n-icon :component="Eye" size="14" /><span class="log-wb__optional-label">{{ currentIsFragment ? '片段发布效果' : '发布效果' }}</span>
           </button>
         </div>
         <button
@@ -1433,11 +1674,12 @@ onBeforeUnmount(() => {
           class="log-wb__text-btn log-wb__multi-btn"
           :class="{ 'is-on': multiMode }"
           :aria-pressed="multiMode"
+          aria-label="多选消息"
           :disabled="previewPublish || !sections.length"
           :title="previewPublish ? '在设计视图中使用多选' : multiMode ? '退出多选 (Esc)' : '多选消息：批量移动、重定位、排除与删除（也可右键消息进入）'"
           @click="multiMode ? exitMulti() : enterMulti()"
         >
-          <n-icon :component="ListCheck" size="16" /><span>多选</span>
+          <n-icon :component="ListCheck" size="16" /><span class="log-wb__optional-label">多选</span>
         </button>
       </div>
 
@@ -1456,23 +1698,43 @@ onBeforeUnmount(() => {
           :save-error="draftCtl.lastError.value"
           @locate="locateFindMessage"
         />
-        <span class="log-wb__save" :class="`is-${draftCtl.status.value}`" :title="draftCtl.lastError.value || `草稿 v${draftCtl.draftVersion.value}`">
-          <i class="log-wb__save-dot" aria-hidden="true" />{{ saveStatusText }}
+        <button
+          v-if="collabPeers.length"
+          type="button"
+          class="log-wb__peers"
+          :title="collabTitle"
+          :aria-label="`${collabPeers.length} 位设计者正在协作，查看协作者与书签`"
+          @click="openPanel('bookmarks')"
+        >
+          <span
+            v-for="p in collabPeers.slice(0, 3)"
+            :key="p.userId"
+            class="log-wb__peer"
+            :title="presenceName(p)"
+            :class="{ 'is-editing': collab.others.value.some((o) => o.userId === p.userId && o.editingMessageId) }"
+            :style="{ background: presenceColor(p.userId) }"
+          >
+            <UserAvatar :src="p.avatar" :size="24" :border="false" :fallback-text="presenceName(p)" use-text-fallback :text-fallback-accent-color="presenceColor(p.userId)" />
+          </span>
+          <span v-if="collabPeers.length > 3" class="log-wb__peer is-more">+{{ collabPeers.length - 3 }}</span>
+        </button>
+        <span class="log-wb__save" :class="`is-${draftCtl.status.value}`" :aria-label="saveStatusText" :title="draftCtl.lastError.value || `${saveStatusText} · 草稿 v${draftCtl.draftVersion.value}`">
+          <i class="log-wb__save-dot" aria-hidden="true" /><span class="log-wb__optional-label">{{ saveStatusText }}</span>
         </span>
         <n-tooltip trigger="hover">
           <template #trigger>
-            <n-button size="small" quaternary :circle="narrow" aria-label="导出" @click="exportShow = true">
+            <n-button class="log-wb__export" size="small" quaternary :circle="narrow" aria-label="导出" @click="exportShow = true">
               <template #icon><n-icon :component="Download" /></template>
-              <span v-if="!narrow">导出</span>
+              <span v-if="!narrow" class="log-wb__optional-label">导出</span>
             </n-button>
           </template>
           按当前 LOG 编排顺序导出传统格式
         </n-tooltip>
         <n-tooltip trigger="hover">
           <template #trigger>
-            <n-button size="small" quaternary :circle="narrow" aria-label="导出 PDF" :disabled="!sections.length" @click="pdfShow = true">
+            <n-button class="log-wb__export" size="small" quaternary :circle="narrow" aria-label="导出 PDF" :disabled="!sections.length" @click="pdfShow = true">
               <template #icon><n-icon :component="Printer" /></template>
-              <span v-if="!narrow">PDF</span>
+              <span v-if="!narrow" class="log-wb__optional-label">PDF</span>
             </n-button>
           </template>
           后台生成整份 LOG 的 PDF，或使用浏览器打印当前片段
@@ -1481,12 +1743,13 @@ onBeforeUnmount(() => {
           size="small"
           type="primary"
           class="log-wb__publish"
+          aria-label="发布"
           :disabled="!caps.publish"
           :title="caps.publish ? '发布前检查与发布' : '仅世界管理者可以发布'"
           @click="openPanel('publish')"
         >
           <template #icon><n-icon :component="Rocket" /></template>
-          发布
+          <span class="log-wb__optional-label">发布</span>
         </n-button>
         <button
           type="button"
@@ -1548,6 +1811,7 @@ onBeforeUnmount(() => {
           :can-resize-images="caps.editDraft && !previewPublish"
           :can-move-elements="caps.editDraft && !previewPublish && !draftCtl.paused.value && draftCtl.status.value !== 'conflict'"
           :relocation="frameRelocation"
+          :collab-marks="collabMarks"
           :multi="multiMode"
           :selection="selection.selected.value"
           :proof-marks="previewPublish ? null : proofMarks"
@@ -1739,6 +2003,25 @@ onBeforeUnmount(() => {
               @locate-element="openElementFromPublish"
               @open-page="openPanel('page')"
             />
+            <LogBookmarksPanel
+              v-else-if="panelTab === 'bookmarks'"
+              :supported="collabSupported"
+              :items="bookmarks.items.value"
+              :loading="bookmarks.loading.value"
+              :error="bookmarks.error.value"
+              :busy="bookmarks.busy.value"
+              :add-target="bookmarkTargetText"
+              :location-of="bookmarkLocation"
+              :collaborators="collab.others.value"
+              :name-of="presenceName"
+              :describe-presence="describePresence"
+              @add="addBookmark()"
+              @jump="jumpToBookmark"
+              @rename="(b: LogBookmark, label: string) => bookmarks.rename(b, label)"
+              @remove="(b: LogBookmark) => bookmarks.remove(b)"
+              @retry="bookmarks.reload()"
+              @follow="followPresence"
+            />
             <LogPublishPanel
               v-else-if="panelTab === 'publish'"
               :context="context"
@@ -1831,6 +2114,15 @@ onBeforeUnmount(() => {
       <span class="log-wb__stat">草稿 v{{ draftCtl.draftVersion.value }}</span>
     </footer>
 
+    <LogBookmarkDialog
+      :show="!!bookmarkCreateTarget"
+      :label="bookmarkCreateTarget?.label || ''"
+      :location="bookmarkCreateTarget?.location || ''"
+      :busy="bookmarks.busy.value"
+      @update:show="(show: boolean) => { if (!show) bookmarkCreateTarget = null; }"
+      @create="createBookmark"
+    />
+
     <LogMessageEditor
       v-model:show="editorShow"
       v-model:tab="editorTab"
@@ -1897,7 +2189,9 @@ onBeforeUnmount(() => {
   --log-wb-hover: var(--sc-chip-bg, rgba(15, 23, 42, 0.05));
   --log-wb-muted: var(--sc-text-secondary, #475569);
   --log-wb-canvas: color-mix(in srgb, var(--sc-bg-page, #f5f5f7) 84%, #8a8a8f);
+  container: log-workbench / inline-size;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1911,9 +2205,9 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 3;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-height: 48px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--log-wb-line);
@@ -1928,36 +2222,29 @@ onBeforeUnmount(() => {
 }
 
 .log-wb__group--doc {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: min-content;
 }
 
 .log-wb__group--view {
   flex: none;
-  gap: 8px;
+  gap: 6px;
 }
 
 .log-wb__group--actions {
-  flex: 1 0 auto;
+  flex: 0 1 auto;
+  min-width: min-content;
   justify-content: flex-end;
 }
 
 .log-wb__group--actions > .log-wb__find {
-  max-width: 288px;
+  flex: 1 1 200px;
+  min-width: 144px;
+  max-width: 224px;
 }
 
-@media (min-width: 901px) and (max-width: 1200px) {
-  .log-wb__bar {
-    flex-wrap: wrap;
-  }
-
-  .log-wb__group--actions {
-    flex-basis: 100%;
-  }
-
-  .log-wb__find {
-    margin-right: auto;
-  }
+.log-wb__find :deep(.log-find__input) {
+  min-width: 64px;
 }
 
 .log-wb__badge {
@@ -1983,8 +2270,9 @@ onBeforeUnmount(() => {
 }
 
 .log-wb__title {
-  flex: 0 1 220px;
-  min-width: 96px;
+  flex: 1 1 180px;
+  min-width: 80px;
+  max-width: 220px;
   font-weight: 600;
   border-radius: 6px;
   transition: background-color 0.12s ease;
@@ -2007,8 +2295,9 @@ onBeforeUnmount(() => {
 }
 
 .log-wb__section {
-  flex: 0 1 170px;
-  min-width: 90px;
+  flex: 1 1 150px;
+  min-width: 96px;
+  max-width: 170px;
   border-radius: 6px;
 }
 
@@ -2127,6 +2416,54 @@ onBeforeUnmount(() => {
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12), 0 0 0 1px var(--log-wb-line-soft);
 }
 
+.log-wb__peers {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.log-wb__peers:hover {
+  background: var(--log-wb-hover);
+}
+
+.log-wb__peers:focus-visible {
+  outline: 2px solid var(--log-wb-accent);
+  outline-offset: 1px;
+}
+
+.log-wb__peer {
+  flex: 0 0 24px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--log-wb-chrome);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.log-wb__peer :deep(.avatar-shell) {
+  border-radius: 50%;
+}
+
+.log-wb__peer.is-editing {
+  box-shadow: 0 0 0 2px var(--log-wb-chrome), 0 0 0 3.5px var(--log-wb-accent);
+}
+
+.log-wb__peer.is-more {
+  background: var(--log-wb-hover);
+  color: var(--log-wb-muted);
+}
+
 .log-wb__save {
   flex: none;
   display: inline-flex;
@@ -2172,6 +2509,61 @@ onBeforeUnmount(() => {
 
 .log-wb__publish {
   flex: none;
+}
+
+/* 按工作台实际宽度收起按钮文字，给查找与头像保留空间。 */
+@container log-workbench (max-width: 1560px) {
+  .log-wb__bar .log-wb__optional-label,
+  .log-wb__bar .log-wb__badge,
+  .log-wb__bar .log-wb__crumb {
+    display: none;
+  }
+
+  .log-wb__bar .log-wb__group--doc {
+    min-width: 216px;
+  }
+
+  .log-wb__bar .log-wb__title {
+    min-width: 56px;
+  }
+
+  .log-wb__bar .log-wb__section {
+    min-width: 72px;
+  }
+
+  .log-wb__bar .log-wb__seg > button {
+    padding: 0 8px;
+  }
+
+  .log-wb__bar .log-wb__export,
+  .log-wb__bar .log-wb__publish {
+    width: 30px;
+    padding: 0;
+  }
+
+  .log-wb__export :deep(.n-button__icon),
+  .log-wb__publish :deep(.n-button__icon) {
+    margin: 0;
+  }
+}
+
+@container log-workbench (max-width: 1100px) {
+  .log-wb__bar {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+
+  .log-wb__bar .log-wb__group {
+    gap: 4px;
+  }
+
+  .log-wb__bar .log-wb__text-btn {
+    padding-inline: 7px;
+  }
+
+  .log-wb__bar .log-wb__seg > button {
+    padding-inline: 6px;
+  }
 }
 
 /* ---- 提示条 ---- */

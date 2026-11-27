@@ -2,7 +2,9 @@
 // 预览 iframe（LogFrameEngine）与后台 PDF Render Surface（运行时位于顶层文档）共用同一实现，
 // 因此两条路径的分页语义只有一份。
 import type {
+  FrameAnchor,
   FrameAsset,
+  FrameCollabMark,
   FrameEvent,
   FrameLayoutResult,
   FramePrintRange,
@@ -141,8 +143,16 @@ export class LogFrameChannel {
     this.channel?.port1.postMessage({ type: 'multi', active });
   }
 
+  collab(marks: FrameCollabMark[]) {
+    this.channel?.port1.postMessage({ type: 'collab', marks });
+  }
+
   scrollTo(nodeId: string, flash = true) {
     this.channel?.port1.postMessage({ type: 'scrollTo', nodeId, flash });
+  }
+
+  restoreViewport(anchor: FrameAnchor) {
+    this.channel?.port1.postMessage({ type: 'restoreAnchor', anchor });
   }
 
   /** 校对审阅层：批注位置随每次排版在 iframe 内重新映射；null 关闭审阅层。 */

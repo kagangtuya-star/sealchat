@@ -162,6 +162,7 @@ function setup(t, caps = {}) {
     describeLogError: () => 'error', isLogError: () => false,
     openEditor: (...args) => calls.opened.push(args), openPanel() {}, insertAtMessage() {},
     proofreadPanelRef: vue.ref(null), previewRef: vue.ref({ scrollTo: id => calls.scrolls.push(id) }),
+    collabSupported: vue.ref(false), bookmarks: { busy: vue.ref(false) },
   };
   const scope = vue.effectScope();
   scope.run(() => vm.runInNewContext(ts.transpileModule(statements.map(node => node.getText(ast)).join('\n')

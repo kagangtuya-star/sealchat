@@ -3,6 +3,8 @@ import axiosFactory, { isAxiosError, type AxiosResponse } from 'axios';
 import { api, urlBase } from '@/stores/_config';
 import type { ChannelIdentityManageCandidatesResponse } from '@/types';
 import type {
+  LogBookmark,
+  LogBookmarkCreate,
   LogDesignMessage,
   LogDraft,
   LogMessageWindow,
@@ -175,6 +177,20 @@ export const fetchLogMessageContext = (projectId: string, sectionId: string, mes
 
 export const updateLogExclusions = (projectId: string, sectionId: string, expectedVersion: number, messageIds: string[], excluded: boolean) =>
   unwrap<{ draftVersion: number }>(api.put(`api/v1/log/projects/${seg(projectId)}/sections/${seg(sectionId)}/exclusions`, { expectedVersion, messageIds, excluded }));
+
+// ---- 书签（不推进草稿版本；可见性由服务端过滤） ----
+
+export const listLogBookmarks = async (projectId: string) =>
+  (await unwrap<{ items: LogBookmark[] | null }>(api.get(`api/v1/log/projects/${seg(projectId)}/bookmarks`))).items || [];
+
+export const createLogBookmark = (projectId: string, input: LogBookmarkCreate) =>
+  unwrap<LogBookmark>(api.post(`api/v1/log/projects/${seg(projectId)}/bookmarks`, input));
+
+export const renameLogBookmark = (projectId: string, bookmarkId: string, label: string) =>
+  unwrap<LogBookmark>(api.patch(`api/v1/log/projects/${seg(projectId)}/bookmarks/${seg(bookmarkId)}`, { label }));
+
+export const deleteLogBookmark = (projectId: string, bookmarkId: string) =>
+  unwrap<{ success: boolean }>(api.delete(`api/v1/log/projects/${seg(projectId)}/bookmarks/${seg(bookmarkId)}`));
 
 // ---- 发布 ----
 

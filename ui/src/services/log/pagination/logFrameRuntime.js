@@ -12,7 +12,7 @@
   var port = null;
   var revision = 0;
   var assetUrls = new Map();
-  var current = { doc: null, design: false, canResizeImages: false, mode: 'paged', spread: false, selection: new Set(), relocation: null, multi: false, zoom: 1 };
+  var current = { doc: null, design: false, canResizeImages: false, mode: 'paged', spread: false, selection: new Set(), relocation: null, multi: false, zoom: 1, collab: [] };
   var root = document.getElementById('log-root');
   var pkgStyle = document.getElementById('log-package');
   var pageStyle = document.getElementById('log-page-rule');
@@ -40,7 +40,9 @@
       case 'select': current.selection = new Set(msg.ids || []); applySelection(); break;
       case 'relocate': current.relocation = msg.state || null; applyRelocation(); break;
       case 'multi': current.multi = msg.active === true; applyMulti(); break;
+      case 'collab': current.collab = sanitizeCollab(msg.marks); applyCollab(); break;
       case 'scrollTo': scrollToNode(msg.nodeId, msg.flash !== false); break;
+      case 'restoreAnchor': restoreAnchor(msg.anchor); reportViewport(); break;
       case 'proofMarks': setProofMarks(msg.nodes); break;
       case 'proofView': setProofView(msg.view); break;
       case 'proofReveal': proofReveal(msg.key); break;
@@ -705,6 +707,7 @@
       applySelection();
       applyRelocation();
       applyMulti();
+      applyCollab();
       restoreAnchor(anchor);
       post({
         type: 'layout', revision: rev, pageCount: host.querySelectorAll('.log-page').length,
@@ -742,6 +745,56 @@
       nodes[i].classList.toggle('log-relocate-source', source);
       nodes[i].classList.toggle('log-relocate-target', active && !source);
     }
+  }
+
+  // 协作标记：其他设计者的光标与编辑锁。纯提示层，绝对定位、不拦截指针，不参与测量与分页。
+  var COLLAB_COLOR = /^(#[0-9a-f]{3,8}|rgba?\([0-9.,\s%]+\)|hsla?\([0-9.,\s%deg]+\))$/i;
+  function sanitizeCollab(marks) {
+    if (!Array.isArray(marks)) return [];
+    var out = [];
+    for (var i = 0; i < marks.length && out.length < 64; i++) {
+      var m = marks[i];
+      if (!m || typeof m.nodeId !== 'string' || !m.nodeId || m.nodeId.length > 120) continue;
+      out.push({
+        nodeId: m.nodeId,
+        label: String(m.label || '').slice(0, 40),
+        color: typeof m.color === 'string' && COLLAB_COLOR.test(m.color.trim()) ? m.color.trim() : '',
+        editing: m.editing === true,
+      });
+    }
+    return out;
+  }
+
+  function applyCollab() {
+    var prev = root.querySelectorAll('.log-collab');
+    for (var i = 0; i < prev.length; i++) prev[i].remove();
+    var marked = root.querySelectorAll('.log-collab-node');
+    for (var k = 0; k < marked.length; k++) marked[k].classList.remove('log-collab-node', 'log-collab-editing');
+    if (!current.design) return;
+    var hosts = new Map();
+    current.collab.forEach(function (m) {
+      var host = hosts.get(m.nodeId);
+      if (!host) {
+        var node = root.querySelector('[data-log-node="' + cssEscape(m.nodeId) + '"]');
+        if (!node) return;
+        host = document.createElement('div');
+        host.className = 'log-collab';
+        host.setAttribute('aria-hidden', 'true');
+        if (m.color) host.style.setProperty('--log-collab-color', m.color);
+        var flags = document.createElement('div');
+        flags.className = 'log-collab-flags';
+        host.appendChild(flags);
+        node.classList.add('log-collab-node');
+        node.appendChild(host);
+        hosts.set(m.nodeId, host);
+      }
+      if (m.editing) host.parentNode.classList.add('log-collab-editing');
+      var chip = document.createElement('span');
+      chip.className = 'log-collab-chip' + (m.editing ? ' is-editing' : '');
+      if (m.color) chip.style.setProperty('--log-collab-color', m.color);
+      chip.textContent = m.label;
+      host.firstChild.appendChild(chip);
+    });
   }
 
   // 多选模式只改变设计态绘制与点击语义：隐藏单条快捷操作，元素不参与选择。

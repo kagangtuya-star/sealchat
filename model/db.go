@@ -145,7 +145,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&GuildModel{})
 	db.AutoMigrate(&WorldGlassPresetModel{}, &WorldGlassStateModel{}, &WorldGlassTriggerModel{})
 	db.AutoMigrate(&MessageModel{})
-	if err := db.AutoMigrate(&LogProjectModel{}, &LogRouteAliasModel{}, &LogMessageExclusionModel{}); err != nil {
+	if err := db.AutoMigrate(&LogProjectModel{}, &LogRouteAliasModel{}, &LogMessageExclusionModel{}, &LogBookmarkModel{}); err != nil {
 		panic(fmt.Sprintf("初始化 LOG 工程数据表失败: %v", err))
 	}
 	if err := db.AutoMigrate(&LogStylePackageModel{}, &LogStyleVersionModel{}, &LogStyleAssetModel{}, &LogProjectStyleBindingModel{}, &LogJobModel{}, &LogReleaseModel{}, &LogReleaseNodeModel{}, &LogReleaseAssetModel{}, &LogAssetReferenceModel{}, &MessageMutationPreviewModel{}, &MessageMutationItemModel{}, &MessageMutationResultModel{}, &MessageOperationModel{}); err != nil {

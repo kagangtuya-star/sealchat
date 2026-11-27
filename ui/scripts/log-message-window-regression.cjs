@@ -171,7 +171,7 @@ for (const change of ['section', 'project', 'source', 'empty section']) {
 
 test('预览转发 near-end，并在追加后的 layout 继续传递 lastAnchor；工作台保留手动入口', async () => {
   const layouts = [], events = [], mounted = [];
-  const props = { doc: { blocks: [] }, assetTokens: [], selection: [], zoom: 1,
+  const props = { doc: { blocks: [] }, assetTokens: [], selection: [], collabMarks: [], zoom: 1,
     prepareAssets: async doc => ({ doc, assets: [] }) };
   const source = read('views/log/components/LogPreviewFrame.vue').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
   const ctx = {
@@ -183,7 +183,7 @@ test('预览转发 near-end，并在追加后的 layout 继续传递 lastAnchor�
       if (name === '@/services/log/pagination/logFrameHost') return {
         LogFrameEngine: class {
           ready = Promise.resolve();
-          zoom() {} proofView() {} proofMarks() {} hasAsset() { return true; } async provideAssets() {}
+          zoom() {} proofView() {} proofMarks() {} collab() {} hasAsset() { return true; } async provideAssets() {}
           async layout(input, revision) { layouts.push(input); return { revision }; }
         },
       };

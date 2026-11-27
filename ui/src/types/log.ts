@@ -11,6 +11,43 @@ export interface LogCapabilities {
   bulkAppearance: boolean;
   /** 服务端明确支持工程正文覆盖；旧版服务端缺少该字段。 */
   supportsContentOverrides?: boolean;
+  /** 服务端支持协作在线状态、消息编辑锁与个人书签；旧版服务端缺少该字段。 */
+  supportsCollaboration?: boolean;
+}
+
+export type LogBookmarkVisibility = 'private' | 'shared';
+
+/** 一个来源片段内的跳转点；独立于草稿及公开发布。 */
+export interface LogBookmark {
+  id: string;
+  sectionId: string;
+  nodeId: string;
+  label: string;
+  createdAt: string;
+  creatorId: string;
+  visibility: LogBookmarkVisibility;
+  canManage: boolean;
+}
+
+export interface LogBookmarkCreate {
+  sectionId: string;
+  nodeId: string;
+  label: string;
+  visibility: LogBookmarkVisibility;
+}
+
+/** 工作台在线状态（WS `log-project-presence`）；每个打开工作台的连接一条。 */
+export interface LogPresence {
+  sessionId: string;
+  userId: string;
+  name: string;
+  avatar?: string;
+  sectionId?: string;
+  messageId?: string;
+  /** 非空即该连接持有这条消息的编辑锁。 */
+  editingMessageId?: string;
+  activity: 'viewing' | 'selecting' | 'editing';
+  updatedAt: number;
 }
 
 export interface LogMessageCapabilities {

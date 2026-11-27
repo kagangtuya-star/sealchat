@@ -254,6 +254,22 @@ html:has(> body.log-design)::-webkit-scrollbar-button { display: none; }
 .log-design.log-relocating .log-message-actions,
 .log-design.log-relocating .log-image-control { display: none; }
 .log-design.log-relocating .log-node.log-relocate-source.log-selected { box-shadow: none; outline: 1.5px dashed var(--log-selection); outline-offset: -2px; }
+/* 协作标记：他人的光标与编辑锁（只在设计态绘制，不拦截指针，不进入打印）。 */
+.log-collab {
+  --log-collab-color: #2f6fde;
+  position: absolute; left: -7px; top: 0; bottom: 0; z-index: 11; width: 3px; border-radius: 2px;
+  background: var(--log-collab-color); pointer-events: none;
+}
+/* 标签像协作光标的旗标一样立在节点左上角之上，与颜色条相连。 */
+.log-collab-flags { position: absolute; left: 0; bottom: 100%; display: flex; gap: 3px; width: max-content; }
+.log-collab-chip {
+  display: block; max-width: 180px; padding: 0 6px; border-radius: 4px 4px 4px 0; overflow: hidden; text-overflow: ellipsis;
+  background: var(--log-collab-color); color: #fff; font: 600 11px/16px sans-serif;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); white-space: nowrap;
+}
+.log-collab-chip.is-editing::before { content: '✎ '; }
+.log-design .log-node.log-collab-editing { background-image: linear-gradient(color-mix(in srgb, var(--log-selection) 4%, transparent), color-mix(in srgb, var(--log-selection) 4%, transparent)); }
+body.log-printing .log-collab { display: none; }
 /* 多选：单条快捷操作与图片手柄让位；原消息首个片段右上角绘制勾选标记（绝对定位，不参与测量）。元素不参与多选。 */
 .log-design.log-multi .log-message-actions,
 .log-design.log-multi .log-image-control { display: none; }

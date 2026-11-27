@@ -49,6 +49,11 @@ func bindLogProjectRoutes(auth fiber.Router) {
 	auth.Get("/log/projects/:id/assets/:assetId", logAuthentication, logProjectAssetGet)
 	auth.Get("/log/projects/:id/sections/:sectionId/message-context/:messageId", logAuthentication, logMessagesGet)
 	auth.Put("/log/projects/:id/sections/:sectionId/exclusions", logAuthentication, logExclusionsPut)
+	auth.Get("/log/projects/:id/bookmarks", logAuthentication, logBookmarksGet)
+	auth.Get("/log/projects/:id/bookmarks/:bookmarkId", logAuthentication, logBookmarkGet)
+	auth.Post("/log/projects/:id/bookmarks", logAuthentication, logBookmarkCreate)
+	auth.Patch("/log/projects/:id/bookmarks/:bookmarkId", logAuthentication, logBookmarkPatch)
+	auth.Delete("/log/projects/:id/bookmarks/:bookmarkId", logAuthentication, logBookmarkDelete)
 }
 
 func logBodyAssetGet(c *fiber.Ctx) error {
@@ -163,6 +168,9 @@ func logDraftPut(c *fiber.Ctx) error {
 		return logResponse(c, nil, err)
 	}
 	data, err := service.SaveLogDraft(c.Params("id"), u.ID, input)
+	if err == nil {
+		notifyLogDraftViewers(c.Params("id"), data.DraftVersion, "draft")
+	}
 	return logResponse(c, data, err)
 }
 func logExclusionsPut(c *fiber.Ctx) error {
@@ -175,7 +183,76 @@ func logExclusionsPut(c *fiber.Ctx) error {
 		return logResponse(c, nil, err)
 	}
 	version, err := service.UpdateLogExclusions(c.Params("id"), c.Params("sectionId"), u.ID, input)
+	if err == nil {
+		notifyLogDraftViewers(c.Params("id"), version, "exclusions")
+	}
 	return logResponse(c, fiber.Map{"draftVersion": version}, err)
+}
+
+func logBookmarksGet(c *fiber.Ctx) error {
+	u := getCurUser(c)
+	if u == nil {
+		return logResponse(c, nil, &service.LogError{Code: "UNAUTHENTICATED", Message: "请先登录"})
+	}
+	items, err := service.ListLogBookmarks(c.Params("id"), u.ID)
+	return logResponse(c, fiber.Map{"items": items}, err)
+}
+
+func logBookmarkCreate(c *fiber.Ctx) error {
+	u := getCurUser(c)
+	if u == nil {
+		return logResponse(c, nil, &service.LogError{Code: "UNAUTHENTICATED", Message: "请先登录"})
+	}
+	var input service.LogBookmarkCreate
+	if err := logDecodeBody(c, &input); err != nil {
+		return logResponse(c, nil, err)
+	}
+	item, err := service.CreateLogBookmark(c.Params("id"), u.ID, input)
+	if err == nil {
+		notifyLogBookmarkViewers(c.Params("id"), item)
+	}
+	return logResponse(c, item, err)
+}
+
+func logBookmarkGet(c *fiber.Ctx) error {
+	u := getCurUser(c)
+	if u == nil {
+		return logResponse(c, nil, &service.LogError{Code: "UNAUTHENTICATED", Message: "请先登录"})
+	}
+	item, err := service.GetLogBookmark(c.Params("id"), u.ID, c.Params("bookmarkId"))
+	return logResponse(c, item, err)
+}
+
+func logBookmarkPatch(c *fiber.Ctx) error {
+	u := getCurUser(c)
+	if u == nil {
+		return logResponse(c, nil, &service.LogError{Code: "UNAUTHENTICATED", Message: "请先登录"})
+	}
+	var input service.LogBookmarkUpdate
+	if err := logDecodeBody(c, &input); err != nil {
+		return logResponse(c, nil, err)
+	}
+	item, err := service.UpdateLogBookmark(c.Params("id"), u.ID, c.Params("bookmarkId"), input)
+	if err == nil {
+		notifyLogBookmarkViewers(c.Params("id"), item)
+	}
+	return logResponse(c, item, err)
+}
+
+func logBookmarkDelete(c *fiber.Ctx) error {
+	u := getCurUser(c)
+	if u == nil {
+		return logResponse(c, nil, &service.LogError{Code: "UNAUTHENTICATED", Message: "请先登录"})
+	}
+	item, err := service.GetLogBookmark(c.Params("id"), u.ID, c.Params("bookmarkId"))
+	if err != nil {
+		return logResponse(c, nil, err)
+	}
+	err = service.DeleteLogBookmark(c.Params("id"), u.ID, c.Params("bookmarkId"))
+	if err == nil {
+		notifyLogBookmarkViewers(c.Params("id"), item)
+	}
+	return logResponse(c, fiber.Map{"success": err == nil}, err)
 }
 func logMessagesGet(c *fiber.Ctx) error {
 	u := getCurUser(c)

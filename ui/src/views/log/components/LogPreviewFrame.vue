@@ -4,6 +4,7 @@ import { onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from 'vue';
 import {
   LogFrameEngine,
   type FrameAnchor,
+  type FrameCollabMark,
   type FrameDocument,
   type FrameEvent,
   type FrameLayoutResult,
@@ -29,6 +30,8 @@ const props = withDefaults(defineProps<{
   proofMarks?: FrameProofNode[] | null;
   proofView?: FrameProofView | null;
   relocation?: FrameRelocation | null;
+  /** 其他设计者的光标与编辑锁标记（仅设计态绘制）。 */
+  collabMarks?: FrameCollabMark[];
   /** 多选模式（仅设计态生效）。 */
   multi?: boolean;
   zoom?: number;
@@ -45,6 +48,7 @@ const props = withDefaults(defineProps<{
   proofMarks: null,
   proofView: null,
   relocation: null,
+  collabMarks: () => [],
   multi: false,
   zoom: 1,
   title: 'LOG 预览',
@@ -133,6 +137,7 @@ onMounted(() => {
     engine.value?.zoom(props.zoom);
     engine.value?.proofView(toRaw(props.proofView) ?? null);
     engine.value?.proofMarks(toRaw(props.proofMarks) ?? null);
+    engine.value?.collab(props.collabMarks.map((m) => ({ ...m })));
     if (props.canvas) engine.value?.canvas(props.canvas.color, props.canvas.dark, props.canvas.accent);
     void run();
   });
@@ -146,6 +151,7 @@ watch(() => props.proofMarks, (nodes) => engine.value?.proofMarks(toRaw(nodes) ?
 watch(() => props.proofView, (view) => engine.value?.proofView(toRaw(view) ?? null));
 watch(() => props.relocation, (state) => engine.value?.relocate(props.design ? state : null));
 watch(() => props.multi, (active) => engine.value?.multi(props.design && active));
+watch(() => props.collabMarks, (marks) => engine.value?.collab(marks.map((m) => ({ ...m }))));
 watch(() => props.zoom, (z) => engine.value?.zoom(z));
 watch(() => props.canvas, (c) => engine.value?.canvas(c?.color ?? null, c?.dark ?? false, c?.accent));
 
@@ -157,6 +163,7 @@ onBeforeUnmount(() => {
 
 defineExpose({
   scrollTo: (nodeId: string, flash = true) => engine.value?.scrollTo(nodeId, flash),
+  restoreViewport: (anchor: FrameAnchor) => engine.value?.restoreViewport(anchor),
   proofReveal: (key: string | null) => engine.value?.proofReveal(key),
   print: (range?: FramePrintRange) => engine.value?.print(range),
   rerun: () => run(),

@@ -32,3 +32,16 @@ type LogMessageExclusionModel struct {
 }
 
 func (*LogMessageExclusionModel) TableName() string { return "log_message_exclusions" }
+
+// LogBookmarkModel is a jump target outside the LOG draft. Legacy rows stay private.
+type LogBookmarkModel struct {
+	StringPKBaseModel
+	ProjectID  string `gorm:"size:100;not null;index:idx_log_bookmark_owner,priority:1"`
+	UserID     string `gorm:"size:100;not null;index:idx_log_bookmark_owner,priority:2"`
+	SectionID  string `gorm:"size:100;not null"`
+	NodeID     string `gorm:"size:100;not null"`
+	Label      string `gorm:"size:200;not null"`
+	Visibility string `gorm:"size:16;not null;default:private"`
+}
+
+func (*LogBookmarkModel) TableName() string { return "log_bookmarks" }
