@@ -50,7 +50,7 @@ export type FrameEvent =
   | { type: 'open'; nodeId: string; kind?: string }
   | { type: 'dragStart' }
   | { type: 'drop'; nodeId: string; targetId: string; side: 'before' | 'after' }
-  | { type: 'action'; nodeId: string; action: 'edit' | 'insert-before' | 'insert-after' }
+  | { type: 'action'; nodeId: string; action: 'edit' | 'insert-before' | 'insert-after' | 'jump-source' }
   | { type: 'anchor'; anchor: FrameAnchor | null; nearEnd?: boolean }
   | { type: 'key'; key: string }
   /** 设计态在原消息上打开右键菜单；x/y 为 iframe 视口坐标。 */

@@ -37,6 +37,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   edit: [tab: 'content' | 'identity' | 'appearance'];
+  'jump-source': [messageId: string];
   move: [dir: -1 | 1];
   relocate: [];
   'cancel-relocate': [];
@@ -63,6 +64,11 @@ const excludeWhy = '仅世界管理者可以调整公开范围';
 
 const moreOptions = computed<DropdownOption[]>(() => [
   {
+    key: 'jump-source',
+    label: '跳转到源消息',
+    disabled: props.busy || !single.value?.message.id,
+  },
+  {
     key: 'remove',
     label: '删除原消息',
     disabled: props.busy || !caps.value?.remove,
@@ -70,6 +76,7 @@ const moreOptions = computed<DropdownOption[]>(() => [
   },
 ]);
 const onMore = (key: string) => {
+  if (key === 'jump-source' && single.value) emit('jump-source', single.value.message.id);
   if (key === 'remove') emit('remove');
 };
 </script>
@@ -133,7 +140,7 @@ const onMore = (key: string) => {
         <n-icon :component="Ban" size="16" /><span>排除</span>
       </button>
       <n-dropdown trigger="click" placement="bottom-end" :options="moreOptions" @select="onMore">
-        <button type="button" class="log-ctx__btn" title="更多：删除原消息" aria-label="更多操作">
+        <button type="button" class="log-ctx__btn" title="更多：跳转到源消息、删除原消息" aria-label="更多操作">
           <n-icon :component="Dots" size="16" />
         </button>
       </n-dropdown>

@@ -645,6 +645,7 @@
       if (!element) {
         bar.appendChild(actionButton('在上方插入元素', '↑+', 'insert-before'));
         bar.appendChild(actionButton('在下方插入元素', '↓+', 'insert-after'));
+        bar.appendChild(actionButton('跳转到源消息', '↗', 'jump-source'));
       }
       node.insertBefore(bar, node.firstChild);
     }

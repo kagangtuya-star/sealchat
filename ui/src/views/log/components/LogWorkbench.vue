@@ -8,6 +8,9 @@ import { useRouter } from 'vue-router';
 import UserAvatar from '@/components/avatar.vue';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
+import { useUtilsStore } from '@/stores/utils';
+import { generateMessageLink } from '@/utils/messageLink';
+import { resolvePublicLinkBase } from '@/utils/publicLinkBase';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -708,6 +711,24 @@ const collabTitle = computed(() => collab.others.value.map((p) => `${presenceNam
 const busy = ref(false);
 const sourceChannelId = computed(() => querySection.value?.source.channelId || '');
 const target = (item: LogDesignMessage) => ({ channelId: sourceChannelId.value, messageId: item.message.id, expectedVersion: item.version });
+const utils = useUtilsStore();
+const jumpToSource = (messageId: string) => {
+  if (busy.value) return;
+  const worldId = props.context.worldId;
+  const channelId = sourceChannelId.value;
+  if (!worldId || !channelId || !messageId || !win.byId(messageId)) {
+    toast.warning('无法生成源消息链接：消息或来源信息缺失');
+    return;
+  }
+  try {
+    const current = new URL(window.location.href);
+    const base = resolvePublicLinkBase(utils.config) || `${current.origin}${current.pathname}`;
+    const link = new URL(generateMessageLink({ worldId, channelId, messageId }, { base }), current.href);
+    window.open(link.href, '_blank', 'noopener,noreferrer');
+  } catch (error) {
+    toast.error(describeLogError(error, '跳转到源消息失败'));
+  }
+};
 
 const runCommand = async (label: string, fn: () => Promise<unknown>, after: () => void) => {
   busy.value = true;
@@ -1218,6 +1239,8 @@ const onFrameEvent = (event: FrameEvent) => {
         if (caps.value.editDraft) insertAtMessage(event.nodeId, 'before');
       } else if (event.action === 'insert-after') {
         if (caps.value.editDraft) insertAtMessage(event.nodeId, 'after');
+      } else if (event.action === 'jump-source') {
+        jumpToSource(event.nodeId);
       }
       break;
     }
@@ -1871,6 +1894,7 @@ onBeforeUnmount(() => {
               :template-overrides="draft.messageTemplateOverrides || {}"
               @template="applyMessageTemplate"
               @edit="(tab) => selectedMessages[0] && openEditor(selectedMessages[0].message.id, tab)"
+              @jump-source="jumpToSource"
               @move="moveSelected"
               @relocate="startRelocate(selection.messageIds.value)"
               @cancel-relocate="cancelRelocate"
