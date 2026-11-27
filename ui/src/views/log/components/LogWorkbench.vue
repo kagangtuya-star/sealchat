@@ -1911,6 +1911,7 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 3;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   min-height: 48px;
@@ -1927,7 +1928,8 @@ onBeforeUnmount(() => {
 }
 
 .log-wb__group--doc {
-  flex: 1 1 0;
+  flex: 1 1 auto;
+  min-width: min-content;
 }
 
 .log-wb__group--view {
@@ -2572,6 +2574,7 @@ onBeforeUnmount(() => {
 
 .is-narrow .log-wb__group--doc {
   flex: 1 1 100%;
+  min-width: 0;
   order: 1;
 }
 
