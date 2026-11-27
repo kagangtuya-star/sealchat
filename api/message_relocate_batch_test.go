@@ -1,15 +1,170 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"gorm.io/gorm"
 	"sealchat/model"
 	"sealchat/pm"
+	"sealchat/service"
 	"sealchat/utils"
 )
+
+func setupVisualStepBatchTest(t *testing.T) (*ChatContext, *model.LogProjectModel, *messageRelocateBatchRequest) {
+	t.Helper()
+	owner, _, channelID := setupRelocateBatchTest(t)
+	const sectionID = "00000000-0000-4000-8000-000000000323"
+	const elementID = "00000000-0000-4000-8000-000000000324"
+	raw, err := json.Marshal(map[string]any{
+		"sections":  []any{map[string]any{"id": sectionID, "source": map[string]any{"channelId": channelID, "toTime": time.Now().Add(time.Hour), "includeOoc": true, "includeArchived": true}}},
+		"elements":  []any{map[string]any{"id": elementID, "anchor": service.LogAnchor{Kind: "message", SectionID: sectionID, MessageID: "a", Side: "before"}, "order": 0, "content": map[string]any{"text": "Keep element"}}},
+		"extension": "keep",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &model.LogProjectModel{StringPKBaseModel: model.StringPKBaseModel{ID: "visual-step-project"}, WorldID: "rb-world", Enabled: true, DraftVersion: 1, DraftJSON: string(raw)}
+	if err := model.GetDB().Create(p).Error; err != nil {
+		t.Fatal(err)
+	}
+	return relocateBatchTestCtx(owner), p, &messageRelocateBatchRequest{
+		ChannelID: channelID, Placement: "before", ClientOpID: "visual-step",
+		Groups:           []messageRelocateGroup{{MessageIDs: []string{"b"}, TargetMessageID: "a"}, {MessageIDs: []string{"d"}, TargetMessageID: "c"}},
+		ExpectedVersions: map[string]int64{"b": 1, "d": 1},
+		LogDraft: &service.LogMessageReorderDraft{ProjectID: p.ID, SectionID: sectionID, ExpectedVersion: 1, VisualStep: true,
+			Placements: []service.LogElementPlacement{{ElementID: elementID, Anchor: service.LogAnchor{Kind: "message", SectionID: sectionID, MessageID: "c", Side: "after"}, Order: 2}}},
+	}
+}
+
+func TestMessageRelocateBatchVisualStep(t *testing.T) {
+	for _, mode := range []string{"multiple ranks", "mixed", "anchors only", "rebalance"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, project, input := setupVisualStepBatchTest(t)
+			want := "badcef"
+			if mode == "mixed" {
+				input.Groups[1].TargetMessageID = ""
+				want = "bacdef"
+			}
+			if mode == "anchors only" {
+				input.Groups[0].TargetMessageID = ""
+				input.Groups[1].TargetMessageID = ""
+				want = "abcdef"
+			}
+			if mode == "rebalance" {
+				if err := model.GetDB().Model(&model.MessageModel{}).Where("id = ?", "c").UpdateColumn("display_order", displayOrderGap+displayOrderEpsilon/4).Error; err != nil {
+					t.Fatal(err)
+				}
+				// d is inserted before c in the saturated a/c gap; b moves before a.
+				want = "badcef"
+			}
+			for replay := 0; replay < 2; replay++ {
+				result, err := apiMessageRelocateBatch(ctx, input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				encoded, _ := json.Marshal(result)
+				if !strings.Contains(string(encoded), `"draft_version":2`) || relocateBatchTestOrder(t, input.ChannelID) != want {
+					t.Fatalf("order=%s response=%s", relocateBatchTestOrder(t, input.ChannelID), encoded)
+				}
+				var got model.LogProjectModel
+				if err := model.GetDB().Where("id = ?", project.ID).Take(&got).Error; err != nil {
+					t.Fatal(err)
+				}
+				if got.DraftVersion != 2 || !strings.Contains(got.DraftJSON, `"messageId":"c"`) || !strings.Contains(got.DraftJSON, `"extension":"keep"`) || !strings.Contains(got.DraftJSON, `"text":"Keep element"`) {
+					t.Fatalf("draft=%s version=%d", got.DraftJSON, got.DraftVersion)
+				}
+			}
+		})
+	}
+}
+
+func TestMessageRelocateBatchVisualStepRejectsAndRollsBack(t *testing.T) {
+	for _, mode := range []string{"message conflict", "draft conflict", "missing anchor", "future anchor", "excluded anchor", "foreign channel", "permission", "missing versions", "missing operation", "legacy anchors", "legacy stationary anchor", "legacy empty target", "overlapping groups"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, project, input := setupVisualStepBatchTest(t)
+			db := model.GetDB()
+			switch mode {
+			case "message conflict":
+				input.ExpectedVersions["d"]++
+			case "draft conflict":
+				input.LogDraft.ExpectedVersion++
+			case "missing anchor":
+				input.LogDraft.Placements[0].Anchor.MessageID = "missing"
+			case "future anchor":
+				if err := db.Model(&model.MessageModel{}).Where("id = ?", "c").UpdateColumn("created_at", time.Now().Add(2*time.Hour)).Error; err != nil {
+					t.Fatal(err)
+				}
+			case "excluded anchor":
+				if err := db.Create(&model.LogMessageExclusionModel{ProjectID: project.ID, SectionID: input.LogDraft.SectionID, MessageID: "c"}).Error; err != nil {
+					t.Fatal(err)
+				}
+			case "foreign channel":
+				input.LogDraft.Placements[0].Anchor.MessageID = "foreign"
+				if err := db.Create(&model.MessageModel{StringPKBaseModel: model.StringPKBaseModel{ID: "foreign"}, ChannelID: "other", UserID: ctx.User.ID, Content: "foreign"}).Error; err != nil {
+					t.Fatal(err)
+				}
+			case "permission":
+				ctx.User.ID = "rb-member"
+			case "missing versions":
+				input.ExpectedVersions = nil
+			case "missing operation":
+				input.ClientOpID = ""
+			case "legacy anchors":
+				input.LogDraft.VisualStep = false
+			case "legacy stationary anchor":
+				input.LogDraft.VisualStep = false
+				input.Groups = input.Groups[:1]
+				delete(input.ExpectedVersions, "d")
+			case "legacy empty target":
+				input.LogDraft = nil
+				input.Groups[1].TargetMessageID = ""
+			case "overlapping groups":
+				input.Groups[1].MessageIDs = []string{"b"}
+			}
+			if _, err := apiMessageRelocateBatch(ctx, input); err == nil {
+				t.Fatal("invalid visual step accepted")
+			}
+			var got model.LogProjectModel
+			if err := db.Where("id = ?", project.ID).Take(&got).Error; err != nil {
+				t.Fatal(err)
+			}
+			if got.DraftVersion != 1 || got.DraftJSON != project.DraftJSON || relocateBatchTestOrder(t, input.ChannelID) != "abcdef" {
+				t.Fatal("partially committed order or draft")
+			}
+			var message model.MessageModel
+			if err := db.Where("id = ?", "b").Take(&message).Error; err != nil || message.Version != 1 {
+				t.Fatalf("message version changed on failure: %d, %v", message.Version, err)
+			}
+		})
+	}
+}
+
+func TestMessageRelocateBatchVisualStepDraftCAS(t *testing.T) {
+	ctx, project, input := setupVisualStepBatchTest(t)
+	commit, err := service.PrepareLogMessagesReorder(ctx.User.ID, input.ChannelID, []string{"b", "d"}, *input.LogDraft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := model.GetDB()
+	if err := db.Model(&model.LogProjectModel{}).Where("id = ?", project.ID).UpdateColumn("draft_version", 2).Error; err != nil {
+		t.Fatal(err)
+	}
+	err = db.Transaction(func(tx *gorm.DB) error {
+		version := int64(1)
+		if err := model.MessageUpdateTx(tx, "b", &version, map[string]any{"display_order": 0}); err != nil {
+			return err
+		}
+		return commit.Apply(tx)
+	})
+	if err == nil || !strings.Contains(err.Error(), "VERSION_CONFLICT") || relocateBatchTestOrder(t, input.ChannelID) != "abcdef" {
+		t.Fatalf("draft CAS did not roll back message order: %v", err)
+	}
+}
 
 type relocateBatchInput = messageRelocateBatchRequest
 

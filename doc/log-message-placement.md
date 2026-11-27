@@ -1,6 +1,6 @@
 # LOG 排版落点
 
-设计态预览以 `sectionStart → (before 元素、消息、after 元素)* → sectionEnd` 排列节点。未加载完整的片段没有可选的 `sectionEnd`。消息排名仍属于频道；元素没有全局排名。批量上移、下移按消息计数；重定位以所点击的视觉间隙为准。
+设计态预览以 `sectionStart → (before 元素、消息、after 元素)* → sectionEnd` 排列节点。未加载完整的片段没有可选的 `sectionEnd`。消息排名仍属于频道；元素没有全局排名。单选和批量上移、下移按当前已加载的可见节点步进，每个选中消息连续段只跨过一个未选节点，未选元素不随消息移动；任一段到达视觉边界时整体不可继续移动。重定位以所点击的视觉间隙为准，消息原有的附属元素仍随行。
 
 `message.reorder` / `message.reorder.log` 的 `after_id` 指左邻，`before_id` 指右邻。客户端可只给用户指向的一侧，服务端排除移动消息，以频道的 `(display_order, created_at, id)` 查出另一侧。两侧都指定时必须是同一真实间隙。
 
@@ -11,6 +11,8 @@ log_draft: { projectId, sectionId, expectedVersion, placements: [{ elementId, an
 ```
 
 新锚点只能指向本次移动集合中的消息。若消息的相对顺序不变、仅需跨越元素，可省去 `target_message_id`。消息版本检查、排名更新、草稿 CAS 和幂等结果同事务提交；成功回包和幂等重放都包含 `draft_version`。无 `log_draft` 的请求不更新工程版本。
+
+视觉步进在需要改锚时增加 `log_draft.visualStep=true`：允许同时提交多个 `groups`，每组的空 `target_message_id` 表示该组只跨元素、不改消息排名，可与真正重排的组混合。所有组仍共享 `placement`，消息集合互不重叠，非空目标互不相同且不在选中集合内。此模式的新锚点可以指向未移动的消息，但必须通过当前用户对同一来源片段的可见性、时间范围及排除规则检查；普通重定位仍只允许挂到移动消息。客户端先保存待写草稿，重新校验来源、权限和落点，再一次提交全部消息版本与草稿 CAS，成功后同步采纳消息顺序和元素锚点。
 
 单条或批量混合移动提交后，服务端另发 `log-project-draft-changed`（`projectId`、`draftVersion`）给有设计访问权的其他普通连接。它不包含草稿、消息或元素信息；发起连接从命令回包采纳版本。频道 `message-reordered` 和 `sourceVersion` 不携带或替代工程草稿版本。
 

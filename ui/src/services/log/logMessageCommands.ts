@@ -120,7 +120,7 @@ export const removeMessagesBatch = async (t: BatchMessageTarget) => {
 export const relocateMessagesBatch = async (
   t: BatchMessageTarget,
   plan: { placement: 'before' | 'after'; groups: Array<{ messageIds: string[]; targetMessageId: string }> },
-  logDraft?: { projectId: string; sectionId: string; expectedVersion: number; placements: LogElementPlacement[] },
+  logDraft?: { projectId: string; sectionId: string; expectedVersion: number; placements: LogElementPlacement[]; visualStep?: boolean },
 ) => {
   const base = batchBase(t, 'relocate-batch');
   const single = plan.groups.length === 1 ? plan.groups[0] : null;

@@ -13,6 +13,8 @@ type LogMessageReorderDraft struct {
 	SectionID       string                `json:"sectionId"`
 	ExpectedVersion int64                 `json:"expectedVersion"`
 	Placements      []LogElementPlacement `json:"placements"`
+	// VisualStep keeps unselected elements in visual order, including beside stationary messages.
+	VisualStep bool `json:"visualStep,omitempty"`
 }
 
 type LogElementPlacement struct {
@@ -61,6 +63,24 @@ func PrepareLogMessagesReorder(userID, channelID string, messageIDs []string, in
 	}
 	if count == 0 || count != int64(len(messageIDs)) {
 		return nil, logError("NOT_FOUND", "消息不在当前来源范围内")
+	}
+	// Visual stepping may leave elements beside stationary messages; validate every new owner against source visibility.
+	if input.VisualStep {
+		for _, placement := range input.Placements {
+			if placement.Anchor.Kind == "message" {
+				owners[placement.Anchor.MessageID] = true
+			}
+		}
+		anchorIDs := make([]string, 0, len(owners))
+		for id := range owners {
+			anchorIDs = append(anchorIDs, id)
+		}
+		if err := logSourceQuery(p, section, userID).Where("id IN ?", anchorIDs).Count(&count).Error; err != nil {
+			return nil, err
+		}
+		if count != int64(len(anchorIDs)) {
+			return nil, logError("INVALID_INPUT", "元素锚点不在当前来源范围内")
+		}
 	}
 	// Keep every other field byte-for-byte at the JSON value level, including extension data.
 	var draft map[string]json.RawMessage

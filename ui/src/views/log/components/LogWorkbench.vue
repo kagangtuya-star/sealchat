@@ -463,7 +463,6 @@ const selectedElement = computed(() => {
   const id = selection.elementId.value;
   return id ? draft.value.elements.find((e) => e.id === id) || null : null;
 });
-const selectedIndex = computed(() => (selectedMessages.value.length === 1 ? win.indexOf(selectedMessages.value[0].message.id) : -1));
 const applyMessageTemplate = (templateId: string) => {
   const ids = selectedMessages.value.map((m) => m.message.id);
   if (!caps.value.editDraft || selectedElement.value || !ids.length || ids.length > 200 || (templateId && !messageTemplates.value.includes(templateId))) return;
@@ -730,11 +729,11 @@ const jumpToSource = (messageId: string) => {
   }
 };
 
-const runCommand = async (label: string, fn: () => Promise<unknown>, after: () => void) => {
+const runCommand = async (label: string, fn: () => Promise<unknown>, after: () => void | Promise<void>) => {
   busy.value = true;
   try {
     await fn();
-    after();
+    await after();
   } catch (error) {
     if (isLogError(error, 'VERSION_CONFLICT') && draftCtl.status.value === 'conflict') {
       toast.warning(draftCtl.lastError.value);
@@ -749,25 +748,8 @@ const runCommand = async (label: string, fn: () => Promise<unknown>, after: () =
   }
 };
 
-const placeAt = (item: LogDesignMessage, toIndex: number, onMoved?: () => void) => {
-  // toIndex：移动后在当前窗口中的目标下标（不含自身）。
-  const rest = win.items.value.filter((it) => it.message.id !== item.message.id);
-  const afterId = rest[toIndex - 1]?.message.id;
-  const beforeId = rest[toIndex]?.message.id;
-  if (!afterId && !beforeId) return;
-  const placement = toIndex < win.indexOf(item.message.id) ? { beforeId } : { afterId };
-  return runCommand('移动', () => reorderMessage(target(item), placement), () => {
-    win.markOwnWrite(item.message.id, item.version + 1);
-    void win.load({ preserveWindow: true });
-    onMoved?.();
-  });
-};
-
 const moveSelected = (dir: -1 | 1) => {
-  const item = selectedMessages.value[0];
-  if (!item) return;
-  const idx = win.indexOf(item.message.id);
-  placeAt(item, idx + dir);
+  if (selectedMessages.value.length === 1) return moveMulti(dir);
 };
 
 type VisualTarget = { id: string; kind: 'message' | 'element'; side: 'before' | 'after' };
@@ -957,8 +939,18 @@ watch([win.items, orderedIds, () => caps.value.editDraft], () => {
 // ---- 多选模式：工作台局部瞬时状态；批量命令按整个选中集合一次提交，不做部分执行 ----
 const multiMode = computed(() => selection.multi.value);
 const selectedSet = computed(() => new Set(selection.messageIds.value));
-const multiAtTop = computed(() => !planBatchStep(windowOrder.value, selectedSet.value, -1));
-const multiAtBottom = computed(() => !planBatchStep(windowOrder.value, selectedSet.value, 1));
+const multiAtTop = computed(() => {
+  const plan = planBatchStep(windowOrder.value, selectedSet.value, -1, {
+    nodes: composition.value?.nodes || [], elements: draft.value.elements, sectionId: querySection.value?.id || '',
+  });
+  return !plan || (!!plan.placements?.length && (!caps.value.editDraft || draftCtl.paused.value || draftCtl.status.value === 'conflict'));
+});
+const multiAtBottom = computed(() => {
+  const plan = planBatchStep(windowOrder.value, selectedSet.value, 1, {
+    nodes: composition.value?.nodes || [], elements: draft.value.elements, sectionId: querySection.value?.id || '',
+  });
+  return !plan || (!!plan.placements?.length && (!caps.value.editDraft || draftCtl.paused.value || draftCtl.status.value === 'conflict'));
+});
 let batchDialog: ReturnType<typeof dialog.warning> | null = null;
 const closeBatchDialog = () => {
   batchDialog?.destroy();
@@ -990,19 +982,43 @@ const batchTarget = (items: LogDesignMessage[]) => ({
   items: items.map((it) => ({ messageId: it.message.id, expectedVersion: it.version })),
 });
 const afterBatchMove = (items: LogDesignMessage[], messageOrderChanged = true) => {
-  // 只有 display_order 变化才会推进消息 version；纯元素锚点事务不能猜测 version + 1。
+  // 纯元素落点以重载结果为准，不从客户端猜测消息版本。
   if (messageOrderChanged) items.forEach((it) => win.markOwnWrite(it.message.id, it.version + 1));
-  void win.load({ preserveWindow: true });
+  return win.load({ preserveWindow: true });
 };
 const canBatch = (items: LogDesignMessage[], key: 'reorder' | 'remove') => items.length > 0 && items.length <= 200 && items.every((it) => it.capabilities[key]);
 
-/** 整体上移/下移一位：每个连续段与相邻的未选消息交换，直接执行。 */
+/** 整体上移/下移一个可见节点；消息排名与必要的元素改锚在同一事务中提交。 */
 const moveMulti = (dir: -1 | 1) => {
-  const items = selectedMessages.value;
-  if (busy.value || !canBatch(items, 'reorder')) return;
-  const plan = planBatchStep(windowOrder.value, selectedSet.value, dir);
-  if (!plan) return;
-  return runCommand('移动', () => relocateMessagesBatch(batchTarget(items), plan), () => afterBatchMove(items));
+  const items = selectedMessages.value.slice();
+  const sec = querySection.value;
+  if (busy.value || previewPublish.value || !sec || !canBatch(items, 'reorder')) return;
+  const selected = new Set(items.map(it => it.message.id));
+  const replan = () => planBatchStep(windowOrder.value, selected, dir, {
+    nodes: composition.value?.nodes || [], elements: draft.value.elements, sectionId: sec.id,
+  });
+  const plan = replan();
+  if (!plan || (plan.placements?.length && (!caps.value.editDraft || draftCtl.paused.value || draftCtl.status.value === 'conflict'))) return;
+  const pid = projectId.value;
+  const source = JSON.stringify(sec.source);
+  const current = () => projectId.value === pid && querySection.value?.id === sec.id && JSON.stringify(currentSection.value?.source) === source;
+  const input = batchTarget(items);
+  const placements = plan.placements;
+  const send = () => placements?.length ? draftCtl.placeElements(placements, async expectedVersion => {
+    if (!current() || previewPublish.value || !caps.value.editDraft || draftCtl.paused.value
+      || items.some(it => !win.byId(it.message.id)?.capabilities.reorder)
+      || JSON.stringify(replan()) !== JSON.stringify(plan)) throw new Error('来源、权限或落点已变化，请重新选择');
+    return (await relocateMessagesBatch(input, plan, { projectId: pid, sectionId: sec.id, expectedVersion, placements, visualStep: true })).draft_version!;
+  }, () => {
+    if (!current()) return;
+    for (const group of plan.groups) {
+      if (group.targetMessageId) win.placeLocal(group.messageIds, plan.placement === 'before'
+        ? { beforeId: group.targetMessageId } : { afterId: group.targetMessageId });
+    }
+  }) : relocateMessagesBatch(input, plan);
+  return runCommand('移动', send, () => {
+    if (current()) return afterBatchMove(items, plan.groups.some(group => !!group.targetMessageId));
+  });
 };
 
 const excludeMulti = () => {
@@ -1887,8 +1903,8 @@ onBeforeUnmount(() => {
               :can-edit-draft="caps.editDraft"
               :can-manage-sources="caps.manageSources"
               :busy="busy"
-              :is-first="selectedIndex <= 0"
-              :is-last="selectedIndex < 0 || selectedIndex >= win.items.value.length - 1"
+              :is-first="multiAtTop"
+              :is-last="multiAtBottom"
               :relocating-count="relocation.active ? relocation.sourceMessageIds.length : 0"
               :template-ids="messageTemplates"
               :template-overrides="draft.messageTemplateOverrides || {}"

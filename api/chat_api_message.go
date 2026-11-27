@@ -4100,8 +4100,9 @@ type messageRelocateGroup struct {
 }
 
 // normalizeMessageRelocateGroups 把单组参数与 groups 统一成分组列表：
-// 各组消息互不重叠、目标互不相同且不在任何组内；组内顺序在执行时按当前显示顺序确定。
-func normalizeMessageRelocateGroups(messageIDs []string, targetMessageID string, groups []messageRelocateGroup) ([]messageRelocateGroup, []string, error) {
+// 各组消息互不重叠、非空目标互不相同且不在任何组内；空目标仅用于 LOG 元素落点。
+// 组内顺序在执行时按当前显示顺序确定。
+func normalizeMessageRelocateGroups(messageIDs []string, targetMessageID string, groups []messageRelocateGroup, allowAnchorOnly bool) ([]messageRelocateGroup, []string, error) {
 	if len(groups) > 0 {
 		if len(collectMessageIDs(messageIDs)) > 0 || strings.TrimSpace(targetMessageID) != "" {
 			return nil, nil, fmt.Errorf("groups 不能与 message_ids/target_message_id 同时使用")
@@ -4119,13 +4120,15 @@ func normalizeMessageRelocateGroups(messageIDs []string, targetMessageID string,
 			return nil, nil, fmt.Errorf("message_ids 不能为空")
 		}
 		target := strings.TrimSpace(group.TargetMessageID)
-		if target == "" {
+		if target == "" && !allowAnchorOnly {
 			return nil, nil, fmt.Errorf("target_message_id 不能为空")
 		}
-		if _, ok := targets[target]; ok {
-			return nil, nil, fmt.Errorf("多个分组不能使用同一目标消息")
+		if target != "" {
+			if _, ok := targets[target]; ok {
+				return nil, nil, fmt.Errorf("多个分组不能使用同一目标消息")
+			}
+			targets[target] = struct{}{}
 		}
-		targets[target] = struct{}{}
 		for _, id := range groupIDs {
 			if _, ok := seen[id]; ok {
 				return nil, nil, fmt.Errorf("同一消息不能出现在多个分组中")
@@ -4168,22 +4171,11 @@ func apiMessageRelocateBatch(ctx *ChatContext, data *messageRelocateBatchRequest
 	if channelID == "" {
 		return nil, fmt.Errorf("channel_id 不能为空")
 	}
-	anchorOnly := data.LogDraft != nil && len(data.Groups) == 0 && data.TargetMessageID == "" && len(data.MessageIDs) > 0
-	var groups []messageRelocateGroup
-	var ids []string
-	if anchorOnly {
-		ids = lo.Uniq(collectMessageIDs(data.MessageIDs))
-		if len(ids) == 0 {
-			return nil, fmt.Errorf("message_ids 不能为空")
-		}
-		groups = []messageRelocateGroup{{MessageIDs: ids}}
-	} else {
-		var err error
-		groups, ids, err = normalizeMessageRelocateGroups(data.MessageIDs, data.TargetMessageID, data.Groups)
-		if err != nil {
-			return nil, err
-		}
+	groups, ids, err := normalizeMessageRelocateGroups(data.MessageIDs, data.TargetMessageID, data.Groups, data.LogDraft != nil)
+	if err != nil {
+		return nil, err
 	}
+	anchorOnly := lo.EveryBy(groups, func(group messageRelocateGroup) bool { return group.TargetMessageID == "" })
 	if len(ids) > 200 {
 		return nil, fmt.Errorf("TOO_LARGE: 每次最多移动 200 条消息")
 	}
@@ -4238,8 +4230,8 @@ func apiMessageRelocateBatch(ctx *ChatContext, data *messageRelocateBatchRequest
 	targetIDs := lo.Map(groups, func(group messageRelocateGroup, _ int) string { return group.TargetMessageID })
 	var commit *service.LogMessageReorderCommit
 	if data.LogDraft != nil {
-		if len(groups) != 1 || data.ExpectedVersions == nil || data.ClientOpID == "" {
-			return nil, fmt.Errorf("INVALID_INPUT: 批量元素落点需要单组消息、消息版本和操作 ID")
+		if (len(groups) != 1 && !data.LogDraft.VisualStep) || data.ExpectedVersions == nil || data.ClientOpID == "" {
+			return nil, fmt.Errorf("INVALID_INPUT: 批量元素落点需要消息版本和操作 ID")
 		}
 		commit, err = service.PrepareLogMessagesReorder(ctx.User.ID, channelID, ids, *data.LogDraft)
 		if err != nil {
@@ -4279,18 +4271,15 @@ func apiMessageRelocateBatch(ctx *ChatContext, data *messageRelocateBatchRequest
 				if gi, ok := groupOf[msg.ID]; ok {
 					selected[gi] = append(selected[gi], msg)
 					count++
+					if groups[gi].TargetMessageID == "" {
+						remaining = append(remaining, msg)
+					}
 				} else {
 					remaining = append(remaining, msg)
 				}
 			}
 			if count != len(ids) {
 				return fmt.Errorf("未找到可调整顺序的消息或无权限操作")
-			}
-			if anchorOnly {
-				for _, msg := range selected[0] {
-					results = append(results, reorderResult{message: msg})
-				}
-				return nil
 			}
 			remainingIndex := make(map[string]int, len(remaining))
 			for i, msg := range remaining {
@@ -4305,6 +4294,9 @@ func apiMessageRelocateBatch(ctx *ChatContext, data *messageRelocateBatchRequest
 			}
 			slots := make([]slot, len(groups))
 			for gi, group := range groups {
+				if group.TargetMessageID == "" {
+					continue
+				}
 				targetIndex, ok := remainingIndex[group.TargetMessageID]
 				if !ok {
 					return fmt.Errorf("目标消息已不可用，请重新选择")
@@ -4332,6 +4324,12 @@ func apiMessageRelocateBatch(ctx *ChatContext, data *messageRelocateBatchRequest
 
 			updated := make([]reorderResult, 0, len(ids))
 			for gi, group := range groups {
+				if group.TargetMessageID == "" {
+					for _, msg := range selected[gi] {
+						updated = append(updated, reorderResult{message: msg})
+					}
+					continue
+				}
 				s := slots[gi]
 				n := float64(len(selected[gi]) + 1)
 				lower := s.lower
