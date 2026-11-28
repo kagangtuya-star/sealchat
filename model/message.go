@@ -651,6 +651,9 @@ func MessagesCountByChannelIDsAfterTime(channelIDs []string, updateTimes []time.
 	if len(channelIDs) != len(updateTimes) {
 		return nil, errors.New("channelIDs和updateTimes长度不匹配")
 	}
+	if len(channelIDs) == 0 {
+		return map[string]int64{}, nil
+	}
 
 	var results []struct {
 		ChannelID string
@@ -661,10 +664,10 @@ func MessagesCountByChannelIDsAfterTime(channelIDs []string, updateTimes []time.
 		Select("channel_id, count(*) as count").
 		Where("user_id <> ?", userID)
 
-	// 使用gorm的条件构建器
-	conditions := db.Where("1 = 0") // 初始为false的条件
-	for i, channelID := range channelIDs {
-		conditions = conditions.Or(db.Where("channel_id = ? AND created_at > ?", channelID, updateTimes[i]))
+	const channelAfterTime = "channel_id = ? AND created_at > ?"
+	conditions := db.Where(channelAfterTime, channelIDs[0], updateTimes[0])
+	for i, channelID := range channelIDs[1:] {
+		conditions = conditions.Or(db.Where(channelAfterTime, channelID, updateTimes[i+1]))
 	}
 
 	err := query.Where(conditions).
