@@ -36,14 +36,15 @@ const props = defineProps<{
   projectId: string;
   sectionId: string;
   channelId: string;
-  /** 当前 LOG 工程对该消息有正文覆盖（如批量校对结果）时为 true。 */
-  contentOverridden?: boolean;
+  canEditDraft: boolean;
+  /** 兼容旧批量替换/校对留下的工程正文；手工保存后写回原消息并清除该覆盖。 */
+  contentOverride?: string;
 }>();
 
 const emit = defineEmits<{
   (e: 'update:show', v: boolean): void;
   (e: 'update:tab', v: 'content' | 'identity' | 'appearance'): void;
-  (e: 'saved', message: LogProtocolMessage, version: number): void;
+  (e: 'saved', message: LogProtocolMessage, version: number, expectedOverride?: string): void;
   (e: 'clear-override'): void;
 }>();
 
@@ -72,10 +73,10 @@ const speaker = computed(() => (props.item ? resolveDesignSpeakerName(props.item
 
 const resetFrom = (item: LogDesignMessage) => {
   messageId.value = item.message.id;
-  text.value = item.message.content || '';
+  text.value = props.contentOverride ?? item.message.content ?? '';
   serverContent.value = item.message.content || '';
   lastSent = serverContent.value;
-  format.value = detectContentFormat(serverContent.value);
+  format.value = detectContentFormat(text.value);
   baseVersion.value = item.version;
   contentStatus.value = 'idle';
   contentError.value = '';
@@ -113,7 +114,7 @@ const scheduleSave = () => {
 const onTextChange = (value: string) => {
   text.value = value;
   if (contentStatus.value === 'conflict') return;
-  if (value === lastSent && !inFlight) {
+  if (value === lastSent && !inFlight && props.contentOverride === undefined) {
     contentStatus.value = 'saved';
     return;
   }
@@ -138,12 +139,18 @@ const switchContentFormat = (next: TextContentFormat) => {
 
 const saveContent = async (): Promise<void> => {
   if (!props.item || !caps.value?.edit || contentStatus.value === 'conflict') return;
+  if (props.contentOverride !== undefined && !props.canEditDraft) {
+    contentStatus.value = 'error';
+    contentError.value = '本条涉及旧工程正文，需要草稿编辑权限才能同步保存';
+    return;
+  }
   if (inFlight) {
     await inFlight;
     return saveContent();
   }
   const snapshot = text.value;
-  if (snapshot === lastSent) {
+  const expectedOverride = props.contentOverride;
+  if (snapshot === lastSent && expectedOverride === undefined) {
     contentStatus.value = 'saved';
     return;
   }
@@ -157,13 +164,14 @@ const saveContent = async (): Promise<void> => {
   const run = async () => {
     try {
       const msg = await updateMessageContent(target, snapshot);
+      if (!msg || msg.id !== target.messageId || typeof msg.version !== 'number') throw new Error('未收到原消息保存结果，请重新加载后确认');
       lastSent = snapshot;
-      const version = typeof msg?.version === 'number' ? msg.version : baseVersion.value + 1;
+      const version = msg.version;
       baseVersion.value = version;
       serverContent.value = msg?.content ?? snapshot;
       contentError.value = '';
       contentStatus.value = text.value === lastSent ? 'saved' : 'dirty';
-      if (msg) emit('saved', msg, version);
+      if (msg) emit('saved', msg, version, expectedOverride);
     } catch (error) {
       if (isLogError(error, 'VERSION_CONFLICT')) {
         contentStatus.value = 'conflict';
@@ -207,6 +215,21 @@ const acceptServer = () => {
   baseVersion.value = c.version;
   conflict.value = null;
   contentStatus.value = 'saved';
+  if (props.item && props.contentOverride !== undefined) {
+    emit('saved', { ...props.item.message, content: c.content, version: c.version }, c.version, props.contentOverride);
+  }
+};
+
+const useOriginalContent = () => {
+  if (!props.canEditDraft || inFlight) return;
+  if (timer) clearTimeout(timer);
+  timer = null;
+  text.value = serverContent.value;
+  format.value = detectContentFormat(text.value);
+  contentStatus.value = 'idle';
+  contentError.value = '';
+  conflict.value = null;
+  emit('clear-override');
 };
 
 /** 用户明确选择以本地内容覆盖：基于最新版本重新提交一次。 */
@@ -527,7 +550,7 @@ const applyAppearance = async () => {
   }
 };
 
-watch([() => props.item, () => props.channelId], ([item, channelId], [prev, prevChannelId]) => {
+watch([() => props.item, () => props.channelId, () => props.contentOverride], ([item, channelId, override], [prev, prevChannelId, prevOverride]) => {
   if (!item) return;
   if (!prev || item.message.id !== messageId.value || channelId !== prevChannelId) {
     if (timer) clearTimeout(timer);
@@ -538,7 +561,7 @@ watch([() => props.item, () => props.channelId], ([item, channelId], [prev, prev
     return;
   }
   // 其他来源（聊天页、他人）推进了版本：本地无未保存输入时跟随服务端。
-  if (item.version > baseVersion.value && !inFlight && (contentStatus.value === 'idle' || contentStatus.value === 'saved')) {
+  if ((item.version > baseVersion.value || override !== prevOverride) && !inFlight && (contentStatus.value === 'idle' || contentStatus.value === 'saved')) {
     resetFrom(item);
     void loadIdentities();
     void loadIdentityOwners();
@@ -601,9 +624,9 @@ const tabModel = computed({
       </n-alert>
       <n-tabs v-model:value="tabModel" type="line" animated>
         <n-tab-pane name="content" tab="正文" :disabled="!caps?.edit">
-          <n-alert v-if="contentOverridden" type="warning" :show-icon="false" class="log-editor__note">
-            本条在当前 LOG 工程中使用校对后的正文，排版与发布显示该正文；这里编辑的是聊天原消息，不会改变工程正文。
-            <n-button size="tiny" quaternary type="primary" @click="emit('clear-override')">改回显示原消息</n-button>
+          <n-alert v-if="contentOverride !== undefined" type="warning" :show-icon="false" class="log-editor__note">
+            本条有旧的工程正文，已载入下方。修改并保存会写回聊天原消息，同时清除该工程正文；也可以放弃旧工程正文，恢复显示原消息。
+            <n-button size="tiny" quaternary type="primary" :disabled="!canEditDraft || contentStatus === 'saving'" @click="useOriginalContent">改回显示原消息</n-button>
           </n-alert>
           <div class="log-editor__format-switch">
             <span class="log-editor__format-label">编辑模式</span>
@@ -631,7 +654,7 @@ const tabModel = computed({
           </div>
           <div class="log-editor__status" role="status" aria-live="polite">
             <span :class="`is-${contentStatus}`">{{ contentStatusText }}</span>
-            <n-button size="small" :disabled="contentStatus !== 'dirty' && contentStatus !== 'error'" @click="saveContent">保存 (Ctrl+S)</n-button>
+            <n-button size="small" :disabled="contentStatus !== 'dirty' && contentStatus !== 'error' && !(contentStatus === 'idle' && contentOverride !== undefined)" @click="saveContent">保存 (Ctrl+S)</n-button>
           </div>
           <div v-if="conflict" class="log-editor__conflict">
             <div class="log-editor__conflict-title">服务器上的最新内容（版本 {{ conflict.version }}）</div>

@@ -1,13 +1,14 @@
 <script setup lang="ts">
 // 校对审阅中心：扫描、筛选、逐处或批量决定、应用与撤销，并驱动画布上的审阅层
-// （原文标记、页边批注卡片、审阅工具条）。采纳后只写入当前 LOG 草稿的正文覆盖（messageContentOverrides），
-// 不修改聊天原消息。本组件、zhlint 与批注映射都按需加载；扫描与应用绑定工程，切换工程或卸载即作废。
+// （原文标记、页边批注卡片、审阅工具条）。应用与撤销均编辑聊天原消息，
+// 复用消息权限与版本检查。本组件、zhlint 与批注映射都按需加载。
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import { useElementSize, useEventListener } from '@vueuse/core';
 import { useMessage } from 'naive-ui';
 import { Adjustments, ArrowBackUp, Check, Checks, ChevronDown, Eye, Focus2, Refresh, X } from '@vicons/tabler';
 import { buildAIPolishDiffTokens } from '@/services/ai/ai-polish-diff';
-import { describeLogError, fetchLogMessageContext, fetchLogSectionMessages, isLogError } from '@/services/log/logApi';
+import { describeLogError, fetchLogSectionMessages } from '@/services/log/logApi';
+import { advanceLogUndoVersions, applyLogMessageEdits, setLogContentOverride, undoLogMessageEdits, verifyLogMessageSources, type LogMessageEditRecord } from '@/services/log/logMessageEdits';
 import {
   PROOF_RULE_LABELS,
   previewProofEdits,
@@ -25,19 +26,15 @@ import { resolveLocalAIProfileForFeature } from '@/services/ai/local-ai';
 import type { AIRunSource } from '@/types';
 import { resolveDesignSpeakerName } from '@/services/log/logRenderer';
 import type { FrameEvent, FrameProofNode, FrameProofView } from '@/services/log/pagination/logFrameHost';
-import type { LogDesignMessage, LogDraft, LogSection } from '@/types/log';
+import type { LogDesignMessage, LogDraft, LogProtocolMessage, LogSection } from '@/types/log';
 import {
-  commitProofApply,
   decideProofIssues,
   planProofApply,
-  proofDraftSizeError,
   proofDecisionKey,
   toProofResult,
-  undoProofApply,
   type ProofDecision,
   type ProofMessageResult,
   type ProofMessageMeta,
-  type ProofUndoRecord,
 } from '../logProofreadBatch';
 import { chapterTitle, chapterViews } from '../logChapterOps';
 import LogProofReviewBar from './LogProofReviewBar.vue';
@@ -50,7 +47,7 @@ const props = defineProps<{
   flush: () => Promise<boolean>;
   saveError: string;
   canEditDraft: boolean;
-  supportsContentOverrides: boolean;
+  canEditMessages: boolean;
   sections: LogSection[];
   chapterSectionIds: string[];
   windowSectionId: string;
@@ -71,6 +68,7 @@ const emit = defineEmits<{
   (e: 'view', view: FrameProofView | null): void;
   (e: 'reveal', key: string, messageId: string, sectionId: string): void;
   (e: 'focus', on: boolean): void;
+  (e: 'saved', message: LogProtocolMessage, version: number): void;
 }>();
 
 const toast = useMessage();
@@ -145,7 +143,7 @@ const scannedProject = ref('');
 const scannedScope = ref('');
 const scannedSourceVersions = shallowRef<Record<string, number>>({});
 const lintMode = ref<'zhlint' | 'local' | ''>('');
-const phase = ref<'' | 'load' | 'check' | 'ai' | 'apply'>('');
+const phase = ref<'' | 'load' | 'check' | 'ai' | 'apply' | 'undo'>('');
 const progress = ref({ done: 0, total: 0 });
 const scanError = ref('');
 const staleIds = ref<Set<string>>(new Set());
@@ -397,7 +395,9 @@ const scan = async () => {
       for (const { sectionId, item } of targets.slice(i, i + CHECK_BATCH)) {
         const original = item.message.content || '';
         const source = overrides[item.message.id] ?? original;
-        const meta = { messageId: item.message.id, sectionId, speaker: resolveDesignSpeakerName(item.message) || '未命名', createdAt: item.message.createdAt, source, original };
+        const meta: ProofMessageMeta = { messageId: item.message.id, sectionId,
+          channelId: item.message.channel?.id || '', version: item.version, canEdit: item.capabilities.edit,
+          speaker: resolveDesignSpeakerName(item.message) || '未命名', createdAt: item.message.createdAt, source, original };
         snapshots.push(meta);
         if (mode.value === 'basic') {
           const issues = proofreadContent(source, lint);
@@ -488,6 +488,7 @@ const filtered = computed(() => entries.value.filter(matches));
 const filterActive = computed(() => statusFilter.value !== 'all' || !!levelFilter.value || !!ruleFilter.value || !!sourceFilter.value);
 
 const setDecisionKey = (key: string, value: ProofDecision | null) => {
+  if (phase.value === 'apply' || phase.value === 'undo') return;
   const outcome = decideProofIssues(results.value, decisions.value, [key], value);
   decisions.value = outcome.decisions;
   if (outcome.conflicts) toast.warning('该建议与已采纳的修改冲突，请先撤回另一项决定再选择');
@@ -495,6 +496,7 @@ const setDecisionKey = (key: string, value: ProofDecision | null) => {
 /** 列表中的 ✓ / ✕ 为切换：再次点击撤回决定。 */
 const toggleDecision = (key: string, value: ProofDecision) => setDecisionKey(key, stateOf(key) === value ? null : value);
 const decideAll = (value: ProofDecision | null, list: ProofEntry[]) => {
+  if (phase.value === 'apply' || phase.value === 'undo') return;
   const outcome = decideProofIssues(results.value, decisions.value, list.map((e) => e.key), value);
   decisions.value = outcome.decisions;
   if (outcome.conflicts) toast.warning(`${outcome.conflicts} 处互斥建议未批量采纳，请逐项选择`);
@@ -722,96 +724,57 @@ const previewTokens = (r: ProofMessageResult) => {
 };
 
 // ---- 应用与撤销 ----
-interface UndoEntry { projectId: string; mode: 'basic' | 'ai'; record: ProofUndoRecord; count: number; results: ProofMessageResult[] }
+interface UndoEntry { projectId: string; mode: 'basic' | 'ai'; record: LogMessageEditRecord[]; count: number; results: ProofMessageResult[] }
 const undoStack = ref<UndoEntry[]>([]);
+// 旧覆盖的清理单独撤销，不混入原消息编辑历史。
+const clearedOverrides = shallowRef<Record<string, string> | null>(null);
 
 const currentOriginal = (id: string) => props.windowItems.find((it) => it.message.id === id)?.message.content;
-const canApply = computed(() => props.canEditDraft && props.supportsContentOverrides);
+const canApply = computed(() => props.canEditMessages);
+
+const messageSaved = (projectId: string, message: LogProtocolMessage, expected: string | undefined, restored?: string) => {
+  if (props.projectId !== projectId) return;
+  emit('saved', message, message.version!);
+  if (expected === restored) return;
+  let synchronized = false;
+  if (!props.canEditDraft || !props.update((next) => {
+    synchronized = setLogContentOverride(next, message.id, expected, restored);
+  }) || !synchronized) throw new Error('原消息已保存，但旧工程正文未同步，请检查草稿权限、冲突或并发修改');
+};
 
 const apply = async () => {
-  if (!props.canEditDraft || !props.supportsContentOverrides || busy.value || scannedProject.value !== props.projectId) return;
+  if (!canApply.value || busy.value || scannedProject.value !== props.projectId) return;
   const token = ++seq;
   const projectId = props.projectId;
+  const appliedMode = mode.value;
   const list = results.value;
+  const picked = { ...decisions.value };
   const ctrl = new AbortController();
   controller = ctrl;
   phase.value = 'apply';
   progress.value = { done: 0, total: list.length };
-  const writes: Record<string, string> = {};
-  const stale: string[] = [];
-  const accepted = (r: ProofMessageResult) => r.issues.some((i) => decisions.value[proofDecisionKey(r.messageId, i.id)] === 'accepted');
+  const accepted = list.filter((r) => r.issues.some((i) => picked[proofDecisionKey(r.messageId, i.id)] === 'accepted'));
   try {
-    // 来源版本是频道级的：其他消息更新不应误判当前校对目标已变化。
-    // 仅版本不同的片段再按目标消息核对原文；跨章节不能依赖当前窗口缓存。
-    const changedMessages = new Set<string>();
-    const verifiedOriginals = new Map<string, string>();
-    for (const sectionId of new Set(list.filter(accepted).map((r) => r.sectionId))) {
-      const page = await fetchLogSectionMessages(projectId, sectionId, null, 1, ctrl.signal);
-      if (token !== seq || props.projectId !== projectId) return;
-      if (scannedSourceVersions.value[sectionId] === page.sourceVersion) continue;
-      for (const result of list.filter((r) => r.sectionId === sectionId && accepted(r))) {
-        try {
-          const context = await fetchLogMessageContext(projectId, sectionId, result.messageId, ctrl.signal);
-          if (token !== seq || props.projectId !== projectId) return;
-          const message = context.items.find((item) => item.message.id === result.messageId)?.message;
-          if (!message || message.isDeleted || message.content !== result.original) {
-            changedMessages.add(result.messageId);
-          } else {
-            verifiedOriginals.set(result.messageId, message.content);
-          }
-        } catch (error) {
-          if (ctrl.signal.aborted || token !== seq) return;
-          if (!isLogError(error, 'NOT_FOUND')) throw error;
-          changedMessages.add(result.messageId);
-        }
-      }
-    }
-    for (let i = 0; i < list.length; i += CHECK_BATCH) {
-      const current = list.slice(i, i + CHECK_BATCH);
-      stale.push(...current.filter((r) => changedMessages.has(r.messageId) && accepted(r)).map((r) => r.messageId));
-      const plan = planProofApply(
-        current.filter((r) => !changedMessages.has(r.messageId)),
-        decisions.value,
-        (id) => props.draft.messageContentOverrides?.[id],
-        (id) => verifiedOriginals.get(id) ?? currentOriginal(id),
-      );
-      Object.assign(writes, plan.writes);
-      stale.push(...plan.stale);
-      progress.value = { done: Math.min(list.length, i + CHECK_BATCH), total: list.length };
-      await yieldFrame();
-      if (token !== seq || props.projectId !== projectId) return;
-    }
-    // 上面的分页校验与让出主线程期间，覆盖正文或审核决定仍可能被修改。
-    // 在同步 mutation 前重算实际写入，避免旧计划覆盖用户刚编辑的草稿。
-    const finalPlan = planProofApply(
-      list.filter((r) => Object.prototype.hasOwnProperty.call(writes, r.messageId)),
-      decisions.value,
-      (id) => props.draft.messageContentOverrides?.[id],
-      (id) => currentOriginal(id) ?? verifiedOriginals.get(id),
-    );
-    for (const id of Object.keys(writes)) delete writes[id];
-    Object.assign(writes, finalPlan.writes);
-    stale.push(...finalPlan.stale);
-    const originals = new Map(list.map((r) => [r.messageId, r.original]));
-    const count = Object.keys(writes).length;
-    const done = new Set(Object.keys(writes));
-    if (count) {
-      const candidate = { ...props.draft };
-      const record: ProofUndoRecord = commitProofApply(candidate, writes, (id) => originals.get(id));
-      const sizeError = proofDraftSizeError(candidate);
-      if (sizeError) {
-        toast.error(sizeError);
-        return;
-      }
-      if (!props.update((next) => {
-        if (candidate.messageContentOverrides) next.messageContentOverrides = candidate.messageContentOverrides;
-        else delete next.messageContentOverrides;
-      })) {
-        toast.error('草稿当前不可写入（可能存在冲突），未应用任何修改');
-        return;
-      }
-      undoStack.value = [{ projectId, mode: mode.value, record, count, results: list.filter((r) => done.has(r.messageId)) }, ...undoStack.value].slice(0, UNDO_LIMIT);
-    }
+    if (!(await props.flush())) throw new Error(props.saveError || '草稿尚未保存，未修改原消息');
+    if (token !== seq || props.projectId !== projectId) return;
+    const changed = await verifyLogMessageSources(projectId, accepted, new Map(Object.entries(scannedSourceVersions.value)), ctrl.signal);
+    if (token !== seq || props.projectId !== projectId || !canApply.value) return;
+    const plan = planProofApply(accepted.filter((r) => !changed.has(r.messageId)), picked,
+      (id) => props.draft.messageContentOverrides?.[id], currentOriginal);
+    const edits = accepted.filter((r) => Object.prototype.hasOwnProperty.call(plan.writes, r.messageId))
+      .map((r) => ({ ...r, content: plan.writes[r.messageId], count: 1,
+        canEdit: r.canEdit && (props.canEditDraft || props.draft.messageContentOverrides?.[r.messageId] === undefined) }));
+    progress.value = { done: 0, total: edits.length };
+    const outcome = await applyLogMessageEdits(() => props.draft, edits,
+      (id) => props.windowItems.find((it) => it.message.id === id)?.message, ctrl.signal,
+      (message, expected) => messageSaved(projectId, message, expected),
+      (done) => { if (token === seq) progress.value = { done, total: edits.length }; });
+    if (props.projectId !== projectId) return;
+    const { record, count } = outcome;
+    const done = new Set(record.map((r) => r.messageId));
+    if (record.length) undoStack.value = [{ projectId, mode: appliedMode, record, count, results: list.filter((r) => done.has(r.messageId)) }, ...undoStack.value].slice(0, UNDO_LIMIT);
+    if (token !== seq) { await props.flush(); return; }
+    const stale = new Set([...changed, ...plan.stale, ...outcome.stale]);
     // 已写入的消息离开审阅列表；当前批注随之移到之后（或之前）仍在列表中的批注。
     const current = activeEntry.value;
     let nextActive = activeKey.value;
@@ -826,13 +789,14 @@ const apply = async () => {
     if (count) {
       const saved = await props.flush().catch(() => false);
       if (token !== seq || props.projectId !== projectId) return;
-      if (saved) toast.success(`已应用并保存 ${count} 条消息的校对结果（仅当前 LOG 工程）`);
-      else toast.error(`已更新 ${count} 条消息的本地草稿，但保存失败：${props.saveError || '请检查草稿保存状态'}`);
+      if (saved) toast.success(`已保存 ${count} 条原消息的校对结果`);
+      else toast.error(`已保存 ${count} 条原消息，但旧工程正文同步失败：${props.saveError || '请检查草稿保存状态'}`);
     }
-    if (stale.length) toast.warning(`${stale.length} 条消息在扫描后已变化，已跳过，请重新扫描`);
-    if (!count && !stale.length) toast.info('没有已采纳的修改');
+    if (outcome.error) toast.error(outcome.error);
+    if (stale.size) toast.warning(`${stale.size} 条消息已变化或没有编辑权限，已跳过，请重新扫描`);
+    if (!count && !stale.size && !outcome.error) toast.info('没有已采纳的修改');
   } catch (error) {
-    if (token === seq && !ctrl.signal.aborted) toast.error(describeLogError(error, '校验来源失败，未应用修改'));
+    if (token === seq && !ctrl.signal.aborted) toast.error(describeLogError(error, '保存校对结果失败'));
   } finally {
     if (token === seq) {
       controller = null;
@@ -843,53 +807,78 @@ const apply = async () => {
 
 const undoLast = async () => {
   const entry = undoStack.value[0];
-  if (!entry || entry.projectId !== props.projectId || !props.canEditDraft || busy.value) return;
-  const projectId = props.projectId;
-  let outcome = { restored: 0, skipped: 0 };
-  let after: Record<string, string> = {};
-  if (!props.update((next) => {
-    outcome = undoProofApply(next, entry.record);
-    after = { ...(next.messageContentOverrides || {}) };
-  })) {
-    toast.error('草稿当前不可写入，无法撤销');
+  if (!entry || entry.projectId !== props.projectId || !canApply.value || busy.value) return;
+  if (!props.canEditDraft && entry.record.some((r) => r.beforeOverride !== undefined)) {
+    toast.warning('本次撤销涉及旧工程正文，需要草稿编辑权限');
     return;
   }
-  undoStack.value = undoStack.value.slice(1);
-  // 正文已回到扫描时的样子的消息重新进入审阅列表，保留原来的采纳决定。
-  if (scannedProject.value === props.projectId && entry.mode === mode.value) {
-    const back = entry.results.filter((r) => (after[r.messageId] ?? r.original) === r.source);
-    if (back.length) {
-      const present = new Set(results.value.map((r) => r.messageId));
-      results.value = [...results.value, ...back.filter((r) => !present.has(r.messageId))]
-        .sort((a, b) => (resultOrder.get(a.messageId) ?? 0) - (resultOrder.get(b.messageId) ?? 0));
+  const projectId = props.projectId;
+  const token = ++seq;
+  const ctrl = controller = new AbortController();
+  phase.value = 'undo';
+  progress.value = { done: 0, total: entry.record.length };
+  try {
+    if (!(await props.flush())) throw new Error(props.saveError || '草稿尚未保存，未撤销原消息修改');
+    if (token !== seq || props.projectId !== projectId) return;
+    const outcome = await undoLogMessageEdits(entry.record, () => props.draft, ctrl.signal,
+      (message, expected, restored) => messageSaved(projectId, message, expected, restored),
+      (done) => { if (token === seq) progress.value = { done, total: entry.record.length }; });
+    if (props.projectId !== projectId) return;
+    const older = undoStack.value.slice(1).map((older) => ({ ...older,
+      record: advanceLogUndoVersions(older.record, entry.record, outcome.messages) }));
+    undoStack.value = outcome.remaining.length
+      ? [{ ...entry, record: outcome.remaining, count: outcome.remaining.length }, ...older] : older;
+    // 正文回到扫描时的样子后恢复建议；再次应用必须使用撤销返回的新版本。
+    if (token === seq && scannedProject.value === props.projectId && entry.mode === mode.value) {
+      const back = entry.results.flatMap((r) => {
+        const message = outcome.messages.get(r.messageId);
+        return message && (props.draft.messageContentOverrides?.[r.messageId] ?? message.content) === r.source
+          ? [{ ...r, original: message.content, version: message.version! }] : [];
+      });
+      if (back.length) {
+        const present = new Set(results.value.map((r) => r.messageId));
+        results.value = [...results.value, ...back.filter((r) => !present.has(r.messageId))]
+          .sort((a, b) => (resultOrder.get(a.messageId) ?? 0) - (resultOrder.get(b.messageId) ?? 0));
+      }
     }
+    const saved = await props.flush().catch(() => false);
+    if (projectId !== props.projectId || token !== seq) return;
+    const summary = `已撤销 ${outcome.restored} 条原消息的校对${outcome.skipped ? `，${outcome.skipped} 条已变化或无权限，已跳过` : ''}`;
+    if (saved) toast.success(summary);
+    else toast.error(`${summary}，但旧工程正文同步失败：${props.saveError || '请检查草稿保存状态'}`);
+    if (outcome.error) toast.error(outcome.error);
+  } catch (error) {
+    if (token === seq && !ctrl.signal.aborted) toast.error(describeLogError(error, '撤销校对失败'));
+  } finally {
+    if (token === seq) { controller = null; phase.value = ''; }
   }
-  const saved = await props.flush().catch(() => false);
-  if (projectId !== props.projectId) return;
-  const summary = `已撤销 ${outcome.restored} 条${outcome.skipped ? `，${outcome.skipped} 条在应用后又被修改，保持现状` : ''}`;
-  if (saved) toast.success(`${summary}，草稿已保存`);
-  else toast.error(`${summary}，但仅更新本地草稿，保存失败：${props.saveError || '请检查草稿保存状态'}`);
 };
 
 const overrideCount = computed(() => Object.keys(props.draft.messageContentOverrides || {}).length);
 const clearAllOverrides = () => {
   const current = props.draft.messageContentOverrides || {};
-  const record: ProofUndoRecord = {};
-  for (const [id, before] of Object.entries(current)) record[id] = { before, after: undefined };
-  const count = Object.keys(record).length;
-  if (!count || !props.canEditDraft) return;
+  const count = Object.keys(current).length;
+  if (!count || !props.canEditDraft || busy.value) return;
   if (!props.update((next) => { delete next.messageContentOverrides; })) {
     toast.error('草稿当前不可写入');
     return;
   }
-  // 还原也是一次可撤销的批量操作：撤销把“无覆盖”恢复为原覆盖值。
-  undoStack.value = [{ projectId: props.projectId, mode: mode.value, record, count, results: [] }, ...undoStack.value].slice(0, UNDO_LIMIT);
-  toast.success(`已将 ${count} 条消息改回显示原消息`);
+  clearedOverrides.value = { ...current };
+  toast.success(`已清除 ${count} 条旧工程正文，显示当前原消息`);
+};
+
+const undoClearOverrides = () => {
+  const previous = clearedOverrides.value;
+  if (!previous || !props.canEditDraft || busy.value) return;
+  if (props.update((next) => {
+    for (const [id, content] of Object.entries(previous)) setLogContentOverride(next, id, undefined, content);
+  })) clearedOverrides.value = null;
 };
 
 watch(() => props.projectId, () => {
   reset();
   undoStack.value = [];
+  clearedOverrides.value = null;
   knownMessages.value = new Map();
   staleIds.value = new Set();
   markCache.clear();
@@ -929,6 +918,7 @@ const phaseText = computed(() => ({
   check: `检查中 · ${progress.value.done}/${progress.value.total} 条`,
   ai: `AI 批次 · ${aiStats.value.success} 成功 / ${aiStats.value.failed} 失败 / 共 ${aiStats.value.total} 批`,
   apply: `应用中 · ${progress.value.done}/${progress.value.total} 条`,
+  undo: `撤销中 · ${progress.value.done}/${progress.value.total} 条`,
 }[phase.value]));
 const reviewedPercent = computed(() => (counts.value.all ? Math.round((counts.value.decided / counts.value.all) * 100) : 0));
 
@@ -972,7 +962,7 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
         <n-button v-if="phase === 'load' || phase === 'check'" @click="cancel">取消</n-button>
         <n-button v-else-if="scanned" quaternary @click="setupOpen = false">收起</n-button>
       </div>
-      <p v-if="!scanned" class="log-proof__muted">{{ mode === 'ai' ? '准备所选范围的完整消息，确认发送后由 AI 独立检查错别字、标点和轻度语病。' : '在本地检查中文标点。' }}采纳的修改只写入当前 LOG 工程，不修改聊天原消息。</p>
+      <p v-if="!scanned" class="log-proof__muted">{{ mode === 'ai' ? '准备所选范围的完整消息，确认发送后由 AI 独立检查错别字、标点和轻度语病。' : '在本地检查中文标点。' }}应用已采纳的修改会保存到聊天原消息，聊天页与 LOG 同步显示。</p>
     </section>
 
     <section v-if="aiPrepared" class="log-proof__setup" aria-label="AI 校对批次">
@@ -1131,32 +1121,33 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
     </template>
 
     <!-- 应用与撤销 -->
-    <footer v-if="(scanned && counts.all) || undoStack.length || overrideCount" class="log-proof__foot">
-      <p v-if="!canEditDraft" class="log-proof__muted is-warn">没有编辑草稿权限，只能审阅。</p>
-      <p v-else-if="!supportsContentOverrides" class="log-proof__muted is-warn">服务器未声明支持保存校对正文，应用已禁用；请同步更新后端后重新打开排版器。</p>
+    <footer v-if="(scanned && counts.all) || undoStack.length || overrideCount || clearedOverrides" class="log-proof__foot">
+      <p v-if="!canEditMessages" class="log-proof__muted is-warn">没有编辑原消息的权限，只能审阅。</p>
+      <p v-else class="log-proof__muted">应用和撤销都会编辑聊天原消息；已变化或无编辑权限的消息会跳过。</p>
       <div class="log-proof__foot-row">
         <n-button
           v-if="scanned && counts.all"
           type="primary"
           class="log-proof__apply"
           :loading="phase === 'apply'"
-          :disabled="!canEditDraft || !supportsContentOverrides || !acceptedCount || busy"
+          :disabled="!canApply || !acceptedCount || busy"
           @click="apply"
-        >应用 {{ acceptedCount }} 处修改</n-button>
-        <n-button v-if="undoStack.length" secondary :disabled="!canEditDraft || !supportsContentOverrides || busy" :title="`撤销上次应用（${undoStack[0].count} 条消息）`" @click="undoLast">
+        >保存 {{ acceptedCount }} 处修改</n-button>
+        <n-button v-if="undoStack.length" secondary :disabled="!canApply || busy" :loading="phase === 'undo'" :title="`撤销上次应用（${undoStack[0].count} 条消息）`" @click="undoLast">
           <template #icon><n-icon :component="ArrowBackUp" /></template>
           撤销
         </n-button>
       </div>
       <div v-if="overrideCount" class="log-proof__overrides">
-        <span>{{ overrideCount }} 条消息使用校对后的正文</span>
+        <span>{{ overrideCount }} 条消息仍使用旧工程正文，可逐条编辑保存到原消息。</span>
         <n-popconfirm @positive-click="clearAllOverrides">
           <template #trigger>
-            <button type="button" class="log-proof__link is-muted" :disabled="!canEditDraft || !supportsContentOverrides || busy">全部改回原消息</button>
+            <button type="button" class="log-proof__link is-muted" :disabled="!canEditDraft || busy">清除旧工程正文</button>
           </template>
-          将 {{ overrideCount }} 条消息改回显示聊天原消息的正文？此操作可撤销。
+          清除 {{ overrideCount }} 条旧工程正文并显示当前原消息？此操作不会撤销已保存到原消息的校对，可单独撤销清除。
         </n-popconfirm>
       </div>
+      <button v-if="clearedOverrides" type="button" class="log-proof__link is-muted" :disabled="!canEditDraft || busy" @click="undoClearOverrides">撤销清除旧工程正文</button>
     </footer>
 
     <Teleport v-if="canvasEl" :to="canvasEl">
@@ -1170,7 +1161,7 @@ const compactBar = computed(() => props.narrow || (canvasWidth.value > 0 && canv
             :accepted="acceptedCount"
             :safe-pending="counts.safePending"
             :can-apply="canApply"
-            :applying="phase === 'apply'"
+            :applying="phase === 'apply' || phase === 'undo'"
             :focused="focused"
             :narrow="compactBar"
             @nav="nav"

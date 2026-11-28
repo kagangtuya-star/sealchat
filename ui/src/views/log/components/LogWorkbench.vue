@@ -70,6 +70,7 @@ import { useLogAssetLibrary } from '../composables/useLogAssetLibrary';
 import { useLogSelection } from '../composables/useLogSelection';
 import { presenceColor, useLogCollab } from '../composables/useLogCollab';
 import { useLogBookmarks } from '../composables/useLogBookmarks';
+import { setLogContentOverride } from '@/services/log/logMessageEdits';
 import { readResumePosition, writeResumePosition } from '../logResumePosition';
 import { createElement, downloadJson, elementAvailability, insertElement, nextOrderAt, rebindStyle, sameAnchor, setMessageTemplateOverrides } from '../logDraftOps';
 import type { StyleStudioPreview, StyleStudioRequest } from '../logStyleWorkingCopy';
@@ -479,7 +480,7 @@ const panelItems: Array<{ key: PanelTab; label: string; hint: string; icon: Comp
   { key: 'assets', label: '素材', hint: '当前 LOG 的图片素材与样式资源', icon: Photo },
   { key: 'bookmarks', label: '书签', hint: '书签与正在协作的设计者', icon: Bookmark },
   { key: 'publish', label: '发布', hint: '发布前检查与发布管理', icon: Rocket },
-  { key: 'proofread', label: '校对', hint: '批量标点与 AI 综合校对，仅修改当前 LOG 工程', icon: Writing },
+  { key: 'proofread', label: '校对', hint: '批量标点与 AI 综合校对，保存到聊天原消息', icon: Writing },
 ];
 const panelTab = ref<PanelTab>('elements');
 // 校对审阅中心按需挂载，首次打开后保持挂载；它驱动画布上的审阅层（批注与审阅状态经 iframe 协议传入）。
@@ -631,10 +632,16 @@ const openEditor = async (messageId: string, tab: 'content' | 'identity' | 'appe
   editorTab.value = tab;
   editorShow.value = true;
 };
-const onEditorSaved = (message: LogProtocolMessage, version: number) => {
+const onEditorSaved = (message: LogProtocolMessage, version: number, expectedOverride?: string) => {
   win.applyServerMessage({ ...message, version });
+  if (expectedOverride !== undefined && caps.value.editDraft) {
+    let synchronized = false;
+    if (!draftCtl.update((next) => { synchronized = setLogContentOverride(next, message.id, expectedOverride); }) || !synchronized) {
+      toast.error('原消息已保存，但旧工程正文未清除，请检查草稿冲突或并发修改');
+    }
+  }
 };
-const editorContentOverridden = computed(() => !!editorMessageId.value && draft.value.messageContentOverrides?.[editorMessageId.value] !== undefined);
+const editorContentOverride = computed(() => draft.value.messageContentOverrides?.[editorMessageId.value]);
 const clearEditorOverride = () => {
   const id = editorMessageId.value;
   if (!id || !caps.value.editDraft) return;
@@ -1731,11 +1738,13 @@ onBeforeUnmount(() => {
           :chapter-epoch="findChapterEpoch"
           :sections="sections"
           :window-items="win.items.value"
-          :can-replace="caps.editDraft && caps.supportsContentOverrides === true"
+          :can-replace="caps.editOwnMessages || caps.editOthersMessages"
+          :can-edit-draft="caps.editDraft"
           :update="draftCtl.update"
           :flush="draftCtl.flush"
           :save-error="draftCtl.lastError.value"
           @locate="locateFindMessage"
+          @saved="onEditorSaved"
         />
         <button
           v-if="collabPeers.length"
@@ -2091,7 +2100,7 @@ onBeforeUnmount(() => {
               :flush="draftCtl.flush"
               :save-error="draftCtl.lastError.value"
               :can-edit-draft="caps.editDraft"
-              :supports-content-overrides="caps.supportsContentOverrides === true"
+              :can-edit-messages="caps.editOwnMessages || caps.editOthersMessages"
               :sections="sections"
               :chapter-section-ids="currentChapter?.sections.map((s) => s.id) || (querySection ? [querySection.id] : [])"
               :window-section-id="querySection?.id || ''"
@@ -2108,6 +2117,7 @@ onBeforeUnmount(() => {
               @view="(v: FrameProofView | null) => (proofView = v)"
               @reveal="revealProof"
               @focus="setProofFocus"
+              @saved="onEditorSaved"
             />
           </div>
         </div>
@@ -2171,7 +2181,8 @@ onBeforeUnmount(() => {
       :project-id="projectId"
       :section-id="querySection?.id || ''"
       :channel-id="sourceChannelId"
-      :content-overridden="editorContentOverridden"
+      :can-edit-draft="caps.editDraft"
+      :content-override="editorContentOverride"
       @saved="onEditorSaved"
       @clear-override="clearEditorOverride"
     />

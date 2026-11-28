@@ -62,10 +62,10 @@ const SHORTCUTS: Array<[string, string]> = [
       type="button"
       class="log-proof-bar__btn is-primary"
       :disabled="!canApply || !accepted || applying"
-      :title="canApply ? '把已采纳的修改写入当前 LOG 工程' : '没有编辑草稿权限或服务器不支持保存校对正文'"
+      :title="canApply ? '把已采纳的修改保存到聊天原消息' : '没有编辑原消息的权限'"
       @click="emit('apply')"
     >
-      {{ applying ? '应用中…' : `应用 ${accepted} 处` }}
+      {{ applying ? '处理中…' : `保存 ${accepted} 处修改` }}
     </button>
 
     <i class="log-proof-bar__sep" aria-hidden="true" />

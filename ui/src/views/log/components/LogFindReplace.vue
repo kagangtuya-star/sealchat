@@ -4,9 +4,8 @@ import { useMessage } from 'naive-ui';
 import { ChevronDown, ChevronUp, Refresh, Replace, Search } from '@vicons/tabler';
 import { describeLogError } from '@/services/log/logApi';
 import { findTextMatches } from '@/services/log/proofread/logProofread';
-import type { LogDesignMessage, LogDraft, LogSection } from '@/types/log';
-import { applyLogReplacements, scanLogMatches, verifyLogMatchSources } from '../logFindReplace';
-import { proofDraftSizeError, undoProofApply, type ProofUndoRecord } from '../logProofreadBatch';
+import type { LogDesignMessage, LogDraft, LogProtocolMessage, LogSection } from '@/types/log';
+import { applyLogReplacements, scanLogMatches, setLogContentOverride, undoLogReplacements, verifyLogMatchSources, type LogReplacementRecord } from '../logFindReplace';
 
 const props = defineProps<{
   projectId: string;
@@ -16,11 +15,15 @@ const props = defineProps<{
   sections: LogSection[];
   windowItems: LogDesignMessage[];
   canReplace: boolean;
+  canEditDraft: boolean;
   update: (mutate: (draft: LogDraft) => void) => boolean;
   flush: () => Promise<boolean>;
   saveError: string;
 }>();
-const emit = defineEmits<{ locate: [messageId: string, sectionId: string, signal: AbortSignal] }>();
+const emit = defineEmits<{
+  locate: [messageId: string, sectionId: string, signal: AbortSignal];
+  saved: [message: LogProtocolMessage, version: number];
+}>();
 
 const toast = useMessage();
 const query = ref('');
@@ -36,7 +39,7 @@ const active = ref(-1);
 const stale = shallowRef<ReadonlySet<string>>(new Set());
 const phase = ref<'scan' | 'replace' | 'undo' | null>(null);
 const scanError = ref('');
-const undoRecord = shallowRef<ProofUndoRecord | null>(null);
+const undoRecord = shallowRef<LogReplacementRecord[] | null>(null);
 let request: AbortController | null = null;
 let navigation: AbortController | null = null;
 let scanDirection: 1 | -1 | undefined;
@@ -44,7 +47,8 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 
 const hits = computed(() => snapshot.value?.results.flatMap((result) => result.matches.map((match) => ({ result, match }))) ?? []);
 const current = computed(() => hits.value[active.value]);
-const isReplaceable = ({ result, match }: (typeof hits.value)[number]) => match.replaceable
+const isReplaceable = ({ result, match }: (typeof hits.value)[number]) => result.canEdit && !!result.channelId && match.replaceable
+  && (props.canEditDraft || props.draft.messageContentOverrides?.[result.messageId] === undefined)
   && !stale.value.has(result.messageId) && match.original !== replacement.value;
 const replaceableCount = computed(() => hits.value.filter(isReplaceable).length);
 const summary = computed(() => `${hits.value.length} 处命中，${replaceableCount.value} 处可替换${stale.value.size ? `，${stale.value.size} 条消息已变化` : ''}`);
@@ -128,7 +132,17 @@ const saveResult = async (operation: AbortController, summary: string) => {
   const saved = await props.flush().catch(() => false);
   if (request !== operation) return;
   if (saved) toast.success(summary);
-  else toast.error(`${summary}，但草稿保存失败：${props.saveError || '请检查草稿保存状态'}`);
+  else toast.error(`${summary}，但旧工程正文的同步保存失败：${props.saveError || '请检查草稿保存状态'}`);
+};
+
+const onMessageSaved = (projectId: string, message: LogProtocolMessage, expectedOverride: string | undefined, restoredOverride?: string) => {
+  if (props.projectId !== projectId) return;
+  emit('saved', message, message.version!);
+  if (expectedOverride === restoredOverride) return;
+  let synchronized = false;
+  if (!props.canEditDraft || !props.update((draft) => {
+    synchronized = setLogContentOverride(draft, message.id, expectedOverride, restoredOverride);
+  }) || !synchronized) throw new Error('原消息已保存，但旧工程正文未同步，请检查草稿权限、冲突或并发修改');
 };
 
 const apply = async (all: boolean) => {
@@ -144,40 +158,40 @@ const apply = async (all: boolean) => {
     return;
   }
   const oldIndex = active.value;
+  const projectId = props.projectId;
   const operation = request = new AbortController();
   phase.value = 'replace';
   try {
+    if (!(await props.flush())) throw new Error(props.saveError || '草稿尚未保存，未替换原消息');
+    if (request !== operation) return;
     const invalidSources = await verifyLogMatchSources(props.projectId, targets, scanned.versions, operation.signal);
     if (request !== operation || !props.canReplace) return;
-    const windowMessages = new Map(props.windowItems.map(({ message }) => [message.id, message]));
-    const outcome = { value: null as ReturnType<typeof applyLogReplacements> | null };
-    if (!props.update((draft) => {
-      outcome.value = applyLogReplacements(draft, targets, text, invalidSources, (id) => windowMessages.get(id));
-    }) || !outcome.value) {
-      toast.error('草稿当前不可写入，未替换任何正文');
-      return;
-    }
-    const { count, writes, stale: skipped, error, record } = outcome.value;
+    const { count, writes, stale: skipped, error, record } = await applyLogReplacements(
+      () => props.draft, targets, text, invalidSources,
+      (id) => props.windowItems.find(({ message }) => message.id === id)?.message,
+      operation.signal, (message, expected) => onMessageSaved(projectId, message, expected),
+    );
+    if (props.projectId !== projectId) return;
+    if (record.length) undoRecord.value = record;
+    // 即使切换查询取消了后续操作，也保存已确认写入对应的旧覆盖清理。
+    if (request !== operation) { await props.flush(); return; }
     stale.value = new Set([...stale.value, ...skipped]);
-    if (skipped.size) toast.warning(`${skipped.size} 条消息的正文或来源已变化，已跳过`);
-    if (error) {
-      toast.error(error);
-      return;
-    }
+    if (skipped.size) toast.warning(`${skipped.size} 条消息的正文、来源或权限已变化，已跳过`);
+    if (error) toast.error(error);
     if (!count) return;
-    if (all) undoRecord.value = record;
-    // 仅重算改过的消息；连续替换用最新覆盖，同一查找不用重新拉取全工程。
+    // 仅重算已确认写回的消息；后续替换使用服务端返回的新版本。
     snapshot.value = { ...scanned, results: scanned.results.flatMap((result) => {
       const source = writes[result.messageId];
       if (source === undefined) return [result];
       const matches = findTextMatches(source, query.value);
-      return matches.length ? [{ ...result, source, matches }] : [];
+      return matches.length ? [{ ...result, original: source, source, matches,
+        version: record.find((item) => item.messageId === result.messageId)!.version }] : [];
     }) };
     active.value = -1;
     if (!all && hits.value.length) showHit(Math.min(oldIndex, hits.value.length - 1));
-    await saveResult(operation, `已替换 ${count} 处正文`);
+    await saveResult(operation, `已替换并写回原消息 ${count} 处正文`);
   } catch (error) {
-    if (request === operation) toast.error(describeLogError(error, '核对来源失败，未替换正文'));
+    if (request === operation) toast.error(describeLogError(error, '替换失败，请检查原消息与草稿状态'));
   } finally {
     if (request === operation) {
       request = null;
@@ -189,30 +203,27 @@ const apply = async (all: boolean) => {
 const undo = async () => {
   const record = undoRecord.value;
   if (!record || !props.canReplace || phase.value) return;
-  let error: string | null = null;
-  let outcome = { restored: 0, skipped: 0 };
-  if (!props.update((draft) => {
-    const candidate = { ...draft };
-    outcome = undoProofApply(candidate, record);
-    error = proofDraftSizeError(candidate);
-    if (!error) {
-      if (candidate.messageContentOverrides) draft.messageContentOverrides = candidate.messageContentOverrides;
-      else delete draft.messageContentOverrides;
-    }
-  })) {
-    toast.error('草稿当前不可写入，无法撤销');
+  if (!props.canEditDraft && record.some((item) => item.beforeOverride !== undefined)) {
+    toast.warning('本次撤销涉及旧工程正文，需要草稿编辑权限');
     return;
   }
-  if (error) {
-    toast.error(error);
-    return;
-  }
-  undoRecord.value = null;
+  const projectId = props.projectId;
   const operation = request = new AbortController();
   phase.value = 'undo';
-  const { restored, skipped } = outcome;
-  await saveResult(operation, `已撤销 ${restored} 条消息的替换${skipped ? `，${skipped} 条后来被修改，已跳过` : ''}`);
-  if (request === operation) void scan();
+  try {
+    if (!(await props.flush()) || request !== operation) return;
+    const { restored, skipped, error, remaining } = await undoLogReplacements(record, () => props.draft, operation.signal,
+      (message, expected, restoredOverride) => onMessageSaved(projectId, message, expected, restoredOverride));
+    if (props.projectId !== projectId) return;
+    undoRecord.value = remaining.length ? remaining : null;
+    if (error && request === operation) toast.error(error);
+    await saveResult(operation, `已撤销 ${restored} 条原消息的替换${skipped ? `，${skipped} 条已变化或无权限，已跳过` : ''}`);
+    if (request === operation) void scan();
+  } catch (error) {
+    if (request === operation) toast.error(describeLogError(error, '撤销失败'));
+  } finally {
+    if (request === operation) { request = null; phase.value = null; }
+  }
 };
 </script>
 
@@ -223,6 +234,7 @@ const undo = async () => {
       class="log-find__input"
       size="small"
       clearable
+      :disabled="phase === 'replace' || phase === 'undo'"
       placeholder="查找正文"
       aria-label="查找 LOG 正文"
       @keydown.enter="onFindEnter"
@@ -246,18 +258,19 @@ const undo = async () => {
       </template>
       <div class="log-find__options">
         <div class="log-find__row">
-          <n-input v-model:value="replacement" size="small" placeholder="替换为" aria-label="替换为" :disabled="!canReplace" />
+          <n-input v-model:value="replacement" size="small" placeholder="替换为" aria-label="替换为" :disabled="!canReplace || !!phase" />
           <n-button size="small" :disabled="!canReplace || !!phase || !current || !isReplaceable(current)" @click="apply(false)">替换</n-button>
           <n-button size="small" :disabled="!canReplace || !!phase || !replaceableCount" @click="apply(true)">全部替换</n-button>
         </div>
         <div class="log-find__row">
-          <n-select v-model:value="scope" size="small" :options="scopeOptions" aria-label="查找范围" />
+          <n-select v-model:value="scope" size="small" :options="scopeOptions" :disabled="!!phase" aria-label="查找范围" />
           <n-button v-if="scanError || stale.size" size="small" :disabled="!!phase" title="重新查找" aria-label="重新查找" @click="scan()">
             <template #icon><n-icon :component="Refresh" /></template>
           </n-button>
           <n-button v-if="undoRecord" size="small" :disabled="!canReplace || !!phase" @click="undo">撤销替换</n-button>
         </div>
         <span v-if="scanError || snapshot" class="log-find__status" role="status">{{ scanError || summary }}</span>
+        <span class="log-find__status">替换会写回聊天原消息；无编辑权限的消息会跳过。</span>
       </div>
     </n-popover>
   </div>

@@ -179,7 +179,7 @@ export interface LogDraft {
   messageImageLayout?: 'none' | 'left' | 'center' | 'right';
   displayRules?: LogDisplayRule[];
   messageTemplateOverrides?: Record<string, string>;
-  /** 工程内的消息正文（如批量校对结果），key 为原消息 id；只影响 LOG，不写回聊天原消息。 */
+  /** 兼容旧版工程正文，key 为原消息 id；编辑/校对现在写回原消息，成功后清理对应旧覆盖。 */
   messageContentOverrides?: Record<string, string>;
   /** 旧工程或扩展留下的回放元数据：仅透传保存，LOG 不解析其内容。 */
   replay?: unknown;
